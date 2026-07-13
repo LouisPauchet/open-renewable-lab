@@ -8,9 +8,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "net_manager.h"
 #include "sampling_engine.h"
 #include "sd_logger.h"
 #include "stub_sensor.h"
+#include "web_portal.h"
 
 static const char *TAG = "app_main";
 
@@ -66,7 +68,10 @@ void app_main(void)
         ESP_LOGW(TAG, "SD logging unavailable (no card, or board_pins.h SD pins not yet configured)");
     }
 
+    ESP_ERROR_CHECK(net_manager_init());
+    ESP_ERROR_CHECK(web_portal_init());
+
     /* Further component init/task spawn is added incrementally as each
-     * subsystem (web_portal, net_manager, mqtt_client) lands - see the
-     * project plan for build order. */
+     * subsystem (mqtt_client, sdi12_bus, i2c_bus, cellular_transport)
+     * lands - see the project plan for build order. */
 }

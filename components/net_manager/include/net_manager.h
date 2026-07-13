@@ -1,0 +1,30 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Brings up the SoftAP (open network, SSID "WalterSensor-XXXX" derived
+ * from the MAC) and starts the always-on-policy state machine: AP stays
+ * on for a 5 minute boot grace period, then stays on for as long as at
+ * least one client is associated, otherwise turns off. This is
+ * independent of the data-plane transport (WiFi STA / cellular) - full
+ * STA connection handling is added on top of this in a later build
+ * stage; for now the radio only ever runs in AP or NULL mode. */
+esp_err_t net_manager_init(void);
+
+/* Extension point for a future physical "force setup mode" button -
+ * immediately (re)enters the boot-grace-equivalent forced-on state. */
+void net_manager_force_ap_on(void);
+
+bool net_manager_ap_is_active(void);
+uint8_t net_manager_ap_client_count(void);
+
+#ifdef __cplusplus
+}
+#endif

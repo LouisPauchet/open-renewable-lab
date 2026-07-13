@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Walter Sensor Node</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; max-width: 860px; margin-inline: auto; }
+  h1 { font-size: 1.3rem; }
+  h2 { font-size: 1.05rem; margin-top: 2rem; border-bottom: 1px solid #8884; padding-bottom: .25rem; }
+  table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
+  th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid #8884; font-size: .9rem; }
+  label { display: block; margin-top: .5rem; font-size: .85rem; }
+  input, select { width: 100%; box-sizing: border-box; padding: .35rem; margin-top: .15rem; }
+  input[type=checkbox] { width: auto; }
+  button { padding: .4rem .9rem; margin-top: .6rem; margin-right: .4rem; cursor: pointer; }
+  form { border: 1px solid #8884; border-radius: 6px; padding: .75rem; margin-top: .5rem; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 140px; }
+  .msg { font-size: .85rem; margin-top: .4rem; }
+  .msg.err { color: #c0392b; }
+  .msg.ok { color: #27ae60; }
+  .hidden { display: none; }
+  #login-screen { max-width: 320px; margin: 3rem auto; }
+  .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .25rem .75rem; font-size: .85rem; }
+  .status-grid div:nth-child(odd) { opacity: .7; }
+  small { opacity: .7; }
+</style>
+</head>
+<body>
+
+<section id="login-screen">
+  <h1>Walter Sensor Node</h1>
+  <form id="login-form">
+    <label>Portal password
+      <input type="password" id="login-password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Log in</button>
+    <div class="msg" id="login-msg"></div>
+  </form>
+</section>
+
+<main id="app" class="hidden">
+  <h1>Walter Sensor Node <button id="logout-btn" style="float:right">Log out</button></h1>
+
+  <h2>Status</h2>
+  <div class="status-grid" id="status-grid"></div>
+
+  <h2>Variables</h2>
+  <table id="variables-table">
+    <thead><tr><th>Name</th><th>Bus</th><th>Address</th><th>Sample</th><th>Log</th><th>Aggregates</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <button id="add-variable-btn">+ Add variable</button>
+  <form id="variable-form" class="hidden"></form>
+  <div class="msg" id="variables-msg"></div>
+
+  <h2>MQTT</h2>
+  <form id="mqtt-form"></form>
+  <div class="msg" id="mqtt-msg"></div>
+
+  <h2>Network</h2>
+  <form id="network-form"></form>
+  <div class="msg" id="network-msg"></div>
+
+  <h2>Portal password</h2>
+  <form id="password-form">
+    <label>Current password <input type="password" id="pw-old" required></label>
+    <label>New password (min 4 characters) <input type="password" id="pw-new" required></label>
+    <button type="submit">Change password</button>
+  </form>
+  <div class="msg" id="password-msg"></div>
+
+  <h2>Backup</h2>
+  <button id="export-btn">Download config backup</button>
+  <label>Restore from backup <input type="file" id="import-file" accept="application/json"></label>
+  <div class="msg" id="backup-msg"></div>
+
+  <h2>System</h2>
+  <button id="reboot-btn">Reboot device</button>
+</main>
+
+<script>
+const $ = (sel, el) => (el || document).querySelector(sel);
+const AGG_BITS = [ ["raw", 1], ["mean", 2], ["min", 4], ["max", 8], ["stddev", 16] ];
+
+async function api(path, opts) {
+  opts = opts || {};
+  opts.credentials = "same-origin";
+  if (opts.body && typeof opts.body !== "string") {
+    opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+    opts.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(path, opts);
+  if (res.status === 401) {
+    showLogin();
+    throw new Error("unauthorized");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || ("HTTP " + res.status));
+  }
+  return data;
+}
+
+function showLogin() {
+  $("#login-screen").classList.remove("hidden");
+  $("#app").classList.add("hidden");
+}
+function showApp() {
+  $("#login-screen").classList.add("hidden");
+  $("#app").classList.remove("hidden");
+  refreshAll();
+}
+
+$("#login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#login-msg").textContent = "";
+  try {
+    await api("/api/login", { method: "POST", body: { password: $("#login-password").value } });
+    $("#login-password").value = "";
+    showApp();
+  } catch (err) {
+    $("#login-msg").textContent = "Login failed: " + err.message;
+    $("#login-msg").className = "msg err";
+  }
+});
+
+$("#logout-btn").addEventListener("click", async () => {
+  await api("/api/logout", { method: "POST" }).catch(() => {});
+  showLogin();
+});
+
+/* ---- status ---- */
+async function refreshStatus() {
+  let s;
+  try { s = await api("/api/status"); } catch { return; }
+  const rows = [
+    ["Uptime", s.uptime_s + " s"],
+    ["Free heap", s.free_heap_bytes + " bytes"],
+    ["AP active", s.ap_active], ["AP clients", s.ap_client_count],
+    ["Transport", s.transport], ["Data link up", s.data_connection_up],
+    ["Time synced", s.time_synced], ["Time (unix)", s.time_unix],
+    ["SD ready", s.sd_ready],
+    ["SD free/total", (s.sd_free_bytes || 0) + " / " + (s.sd_total_bytes || 0)],
+    ["SD drop count", s.sd_drop_count],
+    ["MQTT enabled", s.mqtt_enabled], ["MQTT connected", s.mqtt_connected],
+    ["Variables", s.variable_count], ["Config generation", s.config_generation],
+  ];
+  $("#status-grid").innerHTML = rows.map(r => `<div>${r[0]}</div><div>${r[1]}</div>`).join("");
+}
+
+/* ---- variables ---- */
+function aggMaskToNames(mask) {
+  return AGG_BITS.filter(([, bit]) => mask & bit).map(([name]) => name).join(", ");
+}
+function variableFormFields(v) {
+  v = v || { name: "", bus_type: 0, unit: "", sample_interval_ms: 60000, log_interval_ms: 300000, aggregate_mask: 1, enabled: true,
+             addr: { address: "0", parameter_index: 0, i2c_addr: 0, device_type: 0, channel_index: 0 } };
+  return `
+    <div class="row">
+      <div><label>Name <input name="name" value="${v.name}" required></label></div>
+      <div><label>Unit <input name="unit" value="${v.unit || ''}"></label></div>
+    </div>
+    <label>Bus type
+      <select name="bus_type">
+        <option value="0" ${v.bus_type == 0 ? "selected" : ""}>SDI-12</option>
+        <option value="1" ${v.bus_type == 1 ? "selected" : ""}>I2C</option>
+      </select>
+    </label>
+    <div class="row">
+      <div><label>SDI-12 address (0-9,A-Z,a-z) <input name="sdi12_address" maxlength="1" value="${v.addr.address || '0'}"></label></div>
+      <div><label>SDI-12 parameter index <input type="number" name="sdi12_parameter_index" value="${v.addr.parameter_index || 0}"></label></div>
+    </div>
+    <div class="row">
+      <div><label>I2C address (decimal) <input type="number" name="i2c_addr" value="${v.addr.i2c_addr || 0}"></label></div>
+      <div><label>I2C device type id <input type="number" name="i2c_device_type" value="${v.addr.device_type || 0}"></label></div>
+      <div><label>I2C channel index <input type="number" name="i2c_channel_index" value="${v.addr.channel_index || 0}"></label></div>
+    </div>
+    <div class="row">
+      <div><label>Sample interval (ms) <input type="number" name="sample_interval_ms" value="${v.sample_interval_ms}" required></label></div>
+      <div><label>Log/aggregate interval (ms) <input type="number" name="log_interval_ms" value="${v.log_interval_ms}" required></label></div>
+    </div>
+    <label>Aggregates
+      ${AGG_BITS.map(([name, bit]) => `<label style="display:inline-block;width:auto;margin-right:.75rem">
+        <input type="checkbox" name="agg_${name}" ${(v.aggregate_mask & bit) ? "checked" : ""}> ${name}</label>`).join("")}
+    </label>
+    <label><input type="checkbox" name="enabled" ${v.enabled ? "checked" : ""}> Enabled</label>
+    <button type="submit">Save</button>
+    <button type="button" id="cancel-variable-btn">Cancel</button>
+  `;
+}
+function readVariableForm(form) {
+  const fd = new FormData(form);
+  let mask = 0;
+  for (const [name, bit] of AGG_BITS) if (fd.get("agg_" + name)) mask |= bit;
+  const bus_type = parseInt(fd.get("bus_type"), 10);
+  return {
+    name: fd.get("name"), unit: fd.get("unit") || "",
+    bus_type,
+    addr: bus_type === 0
+      ? { address: (fd.get("sdi12_address") || "0")[0], parameter_index: parseInt(fd.get("sdi12_parameter_index") || "0", 10) }
+      : { i2c_addr: parseInt(fd.get("i2c_addr") || "0", 10), device_type: parseInt(fd.get("i2c_device_type") || "0", 10), channel_index: parseInt(fd.get("i2c_channel_index") || "0", 10) },
+    sample_interval_ms: parseInt(fd.get("sample_interval_ms"), 10),
+    log_interval_ms: parseInt(fd.get("log_interval_ms"), 10),
+    aggregate_mask: mask,
+    enabled: !!fd.get("enabled"),
+  };
+}
+function openVariableForm(v, id) {
+  const form = $("#variable-form");
+  form.innerHTML = variableFormFields(v);
+  form.classList.remove("hidden");
+  $("#cancel-variable-btn", form).addEventListener("click", () => form.classList.add("hidden"));
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    $("#variables-msg").textContent = "";
+    try {
+      const body = readVariableForm(form);
+      if (id) await api("/api/variables/" + id, { method: "PUT", body });
+      else await api("/api/variables", { method: "POST", body });
+      form.classList.add("hidden");
+      await refreshVariables();
+    } catch (err) {
+      $("#variables-msg").textContent = "Save failed: " + err.message;
+      $("#variables-msg").className = "msg err";
+    }
+  };
+}
+$("#add-variable-btn").addEventListener("click", () => openVariableForm(null, null));
+
+async function refreshVariables() {
+  let vars;
+  try { vars = await api("/api/variables"); } catch { return; }
+  const tbody = $("#variables-table tbody");
+  tbody.innerHTML = "";
+  for (const v of vars) {
+    const addr = v.bus_type === 0 ? ("addr " + v.addr.address + " #" + v.addr.parameter_index)
+                                   : ("0x" + v.addr.i2c_addr.toString(16) + " ch" + v.addr.channel_index);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${v.name}${v.enabled ? "" : " (disabled)"}</td>
+      <td>${v.bus_type === 0 ? "SDI-12" : "I2C"}</td><td>${addr}</td>
+      <td>${v.sample_interval_ms} ms</td><td>${v.log_interval_ms} ms</td>
+      <td>${aggMaskToNames(v.aggregate_mask)}</td>
+      <td>
+        <button data-act="preview">Preview</button>
+        <button data-act="edit">Edit</button>
+        <button data-act="delete">Delete</button>
+      </td>`;
+    tr.querySelector('[data-act=preview]').addEventListener("click", async () => {
+      try {
+        const r = await api("/api/variables/" + v.id + "/preview", { method: "POST" });
+        alert(v.name + " = " + r.value);
+      } catch (err) { alert("Preview failed: " + err.message); }
+    });
+    tr.querySelector('[data-act=edit]').addEventListener("click", () => openVariableForm(v, v.id));
+    tr.querySelector('[data-act=delete]').addEventListener("click", async () => {
+      if (!confirm("Delete variable '" + v.name + "'?")) return;
+      await api("/api/variables/" + v.id, { method: "DELETE" });
+      await refreshVariables();
+    });
+    tbody.appendChild(tr);
+  }
+}
+
+/* ---- MQTT settings ---- */
+function mqttFormFields(m) {
+  return `
+    <label><input type="checkbox" name="enabled" ${m.enabled ? "checked" : ""}> Enabled</label>
+    <div class="row">
+      <div><label>Host <input name="host" value="${m.host}"></label></div>
+      <div><label>Port <input type="number" name="port" value="${m.port}"></label></div>
+    </div>
+    <label><input type="checkbox" name="use_tls" ${m.use_tls ? "checked" : ""}> Use TLS (MQTTS)</label>
+    <label><input type="checkbox" name="tls_allow_insecure" ${m.tls_allow_insecure ? "checked" : ""}> Allow insecure TLS (skip cert validation - lab/self-signed brokers only)</label>
+    <div class="row">
+      <div><label>Client ID <input name="client_id" value="${m.client_id}"></label></div>
+      <div><label>Username <input name="username" value="${m.username}"></label></div>
+    </div>
+    <label>Password ${m.password_set ? "<small>(already set - leave blank to keep)</small>" : ""} <input type="password" name="password"></label>
+    <label>Topic prefix <input name="topic_prefix" value="${m.topic_prefix}"></label>
+    <button type="submit">Save MQTT settings</button>
+  `;
+}
+async function refreshMqtt() {
+  let m;
+  try { m = await api("/api/settings/mqtt"); } catch { return; }
+  const form = $("#mqtt-form");
+  form.innerHTML = mqttFormFields(m);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const body = {
+      enabled: !!fd.get("enabled"), host: fd.get("host"), port: parseInt(fd.get("port"), 10),
+      use_tls: !!fd.get("use_tls"), tls_allow_insecure: !!fd.get("tls_allow_insecure"),
+      client_id: fd.get("client_id"), username: fd.get("username"), topic_prefix: fd.get("topic_prefix"),
+    };
+    if (fd.get("password")) body.password = fd.get("password");
+    try {
+      await api("/api/settings/mqtt", { method: "PUT", body });
+      $("#mqtt-msg").textContent = "Saved."; $("#mqtt-msg").className = "msg ok";
+      await refreshMqtt();
+    } catch (err) {
+      $("#mqtt-msg").textContent = "Save failed: " + err.message; $("#mqtt-msg").className = "msg err";
+    }
+  };
+}
+
+/* ---- Network settings ---- */
+function networkFormFields(n) {
+  return `
+    <label>Transport
+      <select name="transport">
+        <option value="unconfigured" ${n.transport === "unconfigured" ? "selected" : ""}>Unconfigured</option>
+        <option value="wifi" ${n.transport === "wifi" ? "selected" : ""}>WiFi</option>
+        <option value="cellular" ${n.transport === "cellular" ? "selected" : ""}>Cellular</option>
+      </select>
+    </label>
+    <div class="row">
+      <div><label>WiFi SSID <input name="wifi_sta_ssid" value="${n.wifi_sta_ssid}"></label></div>
+      <div><label>WiFi password ${n.wifi_sta_password_set ? "<small>(set - leave blank to keep)</small>" : ""} <input type="password" name="wifi_sta_password"></label></div>
+    </div>
+    <div class="row">
+      <div><label>Cellular APN <input name="cellular_apn" value="${n.cellular_apn}"></label></div>
+      <div><label>SIM PIN ${n.cellular_pin_set ? "<small>(set - leave blank to keep)</small>" : ""} <input type="password" name="cellular_pin"></label></div>
+    </div>
+    <button type="submit">Save network settings</button>
+    <small>Changing transport requires a reboot to take effect.</small>
+  `;
+}
+async function refreshNetwork() {
+  let n;
+  try { n = await api("/api/settings/network"); } catch { return; }
+  const form = $("#network-form");
+  form.innerHTML = networkFormFields(n);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const body = { transport: fd.get("transport"), wifi_sta_ssid: fd.get("wifi_sta_ssid"), cellular_apn: fd.get("cellular_apn") };
+    if (fd.get("wifi_sta_password")) body.wifi_sta_password = fd.get("wifi_sta_password");
+    if (fd.get("cellular_pin")) body.cellular_pin = fd.get("cellular_pin");
+    try {
+      const r = await api("/api/settings/network", { method: "PUT", body });
+      $("#network-msg").textContent = "Saved." + (r.reboot_required ? " Reboot required to apply." : "");
+      $("#network-msg").className = "msg ok";
+      await refreshNetwork();
+    } catch (err) {
+      $("#network-msg").textContent = "Save failed: " + err.message; $("#network-msg").className = "msg err";
+    }
+  };
+}
+
+/* ---- password ---- */
+$("#password-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/api/settings/password", { method: "PUT", body: { old: $("#pw-old").value, new: $("#pw-new").value } });
+    $("#pw-old").value = ""; $("#pw-new").value = "";
+    $("#password-msg").textContent = "Password changed."; $("#password-msg").className = "msg ok";
+  } catch (err) {
+    $("#password-msg").textContent = "Failed: " + err.message; $("#password-msg").className = "msg err";
+  }
+});
+
+/* ---- backup ---- */
+$("#export-btn").addEventListener("click", async () => {
+  const data = await api("/api/settings/export");
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "walter-sensor-config.json";
+  a.click();
+});
+$("#import-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const r = await api("/api/settings/import", { method: "POST", body: text });
+    $("#backup-msg").textContent = "Imported." + (r.reboot_required ? " Reboot required." : "");
+    $("#backup-msg").className = "msg ok";
+    await refreshAll();
+  } catch (err) {
+    $("#backup-msg").textContent = "Import failed: " + err.message; $("#backup-msg").className = "msg err";
+  }
+});
+
+/* ---- reboot ---- */
+$("#reboot-btn").addEventListener("click", async () => {
+  if (!confirm("Reboot the device now?")) return;
+  await api("/api/system/reboot", { method: "POST" }).catch(() => {});
+  alert("Rebooting. Reconnect to the portal in a moment.");
+});
+
+async function refreshAll() {
+  await Promise.all([refreshStatus(), refreshVariables(), refreshMqtt(), refreshNetwork()]);
+}
+setInterval(() => { if (!$("#app").classList.contains("hidden")) refreshStatus(); }, 5000);
+
+/* Try loading status on page load to detect an already-active session. */
+api("/api/status").then(showApp).catch(() => showLogin());
+</script>
+</body>
+</html>
