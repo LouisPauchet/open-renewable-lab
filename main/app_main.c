@@ -8,6 +8,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "i2c_bus.h"
+#include "i2c_sensor_registry.h"
 #include "mqtt_client_bridge.h"
 #include "net_manager.h"
 #include "sampling_engine.h"
@@ -63,8 +65,12 @@ void app_main(void)
         ESP_LOGW(TAG, "SDI-12 bus unavailable (board_pins.h SDI-12 pins not configured), using stub sensor");
         sampling_engine_register_bus_driver(BUS_TYPE_SDI12, stub_sensor_read);
     }
-    /* I2C bus/sensor drivers land in a later build stage; stub for now. */
-    sampling_engine_register_bus_driver(BUS_TYPE_I2C, stub_sensor_read);
+    if (i2c_bus_init() == ESP_OK) {
+        sampling_engine_register_bus_driver(BUS_TYPE_I2C, i2c_variable_read);
+    } else {
+        ESP_LOGW(TAG, "I2C bus unavailable (board_pins.h I2C pins not configured), using stub sensor");
+        sampling_engine_register_bus_driver(BUS_TYPE_I2C, stub_sensor_read);
+    }
     ESP_ERROR_CHECK(sampling_engine_init());
 
     QueueHandle_t debug_sink = xQueueCreate(16, sizeof(aggregate_result_t));
@@ -83,6 +89,6 @@ void app_main(void)
     ESP_ERROR_CHECK(mqttc_init());
 
     /* Further component init/task spawn is added incrementally as each
-     * subsystem (i2c_bus, cellular_transport) lands - see the project
-     * plan for build order. */
+     * subsystem (cellular_transport) lands - see the project plan for
+     * build order. */
 }

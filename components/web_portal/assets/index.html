@@ -54,6 +54,7 @@
   </table>
   <button id="add-variable-btn">+ Add variable</button>
   <button id="scan-sdi12-btn">Scan SDI-12 bus</button>
+  <button id="scan-i2c-btn">Scan I2C bus</button>
   <form id="variable-form" class="hidden"></form>
   <div class="msg" id="variables-msg"></div>
 
@@ -237,6 +238,21 @@ $("#scan-sdi12-btn").addEventListener("click", async () => {
   try {
     const addrs = await api("/api/bus/sdi12/scan");
     $("#variables-msg").textContent = addrs.length ? ("Found addresses: " + addrs.join(", ")) : "No SDI-12 sensors responded.";
+    $("#variables-msg").className = "msg ok";
+  } catch (err) {
+    $("#variables-msg").textContent = "Scan failed: " + err.message;
+    $("#variables-msg").className = "msg err";
+  }
+});
+
+$("#scan-i2c-btn").addEventListener("click", async () => {
+  $("#variables-msg").textContent = "Scanning I2C bus...";
+  $("#variables-msg").className = "msg";
+  try {
+    const addrs = await api("/api/bus/i2c/scan");
+    $("#variables-msg").textContent = addrs.length
+      ? ("Found addresses: " + addrs.map(a => "0x" + a.toString(16)).join(", "))
+      : "No I2C devices responded.";
     $("#variables-msg").className = "msg ok";
   } catch (err) {
     $("#variables-msg").textContent = "Scan failed: " + err.message;

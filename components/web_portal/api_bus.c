@@ -1,3 +1,4 @@
+#include "i2c_bus.h"
 #include "sdi12_bus.h"
 #include "web_portal_internal.h"
 
@@ -24,8 +25,31 @@ static esp_err_t sdi12_scan_handler(httpd_req_t *req)
     return wp_send_json(req, arr);
 }
 
+static esp_err_t i2c_scan_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    uint8_t found[128];
+    size_t count = 0;
+    esp_err_t err = i2c_bus_scan(found, sizeof(found), &count);
+    if (err != ESP_OK) {
+        return wp_send_error(req, "503 Service Unavailable", "I2C bus not available");
+    }
+
+    cJSON *arr = cJSON_CreateArray();
+    for (size_t i = 0; i < count; i++) {
+        cJSON_AddItemToArray(arr, cJSON_CreateNumber(found[i]));
+    }
+    return wp_send_json(req, arr);
+}
+
 void api_bus_register_routes(httpd_handle_t server)
 {
     httpd_uri_t u = { .uri = "/api/bus/sdi12/scan", .method = HTTP_GET, .handler = sdi12_scan_handler };
+    httpd_register_uri_handler(server, &u);
+
+    u = (httpd_uri_t){ .uri = "/api/bus/i2c/scan", .method = HTTP_GET, .handler = i2c_scan_handler };
     httpd_register_uri_handler(server, &u);
 }
