@@ -9,6 +9,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "sampling_engine.h"
+#include "sd_logger.h"
 #include "stub_sensor.h"
 
 static const char *TAG = "app_main";
@@ -59,9 +60,13 @@ void app_main(void)
     ESP_ERROR_CHECK(sampling_engine_add_result_sink(debug_sink));
     xTaskCreate(debug_result_sink_task, "debug_sink", 4096, debug_sink, tskIDLE_PRIORITY + 1, NULL);
 
+    if (sd_logger_init() == ESP_OK) {
+        ESP_ERROR_CHECK(sampling_engine_add_result_sink(sd_logger_get_sink_queue()));
+    } else {
+        ESP_LOGW(TAG, "SD logging unavailable (no card, or board_pins.h SD pins not yet configured)");
+    }
+
     /* Further component init/task spawn is added incrementally as each
-     * subsystem (sd_logger, web_portal, net_manager, mqtt_client) lands -
-     * see the project plan for build order. debug_result_sink_task above
-     * is replaced by sd_logger/mqtt_publish_task's own sinks once those
-     * exist. */
+     * subsystem (web_portal, net_manager, mqtt_client) lands - see the
+     * project plan for build order. */
 }
