@@ -35,11 +35,14 @@ static void IRAM_ATTR sdi12_gpio_isr(void *arg)
     }
 }
 
-/* ---- bit-level TX/RX (SDI-12 polarity: mark/idle=LOW=1, space=HIGH=0) ---- */
+/* ---- bit-level TX/RX (SDI-12 polarity: mark/idle=LOW=1, space=HIGH=0) ----
+ * TXD and RXD are separate, fixed-direction pins (see board_pins.h) -
+ * no gpio_set_direction() toggling needed; only the TX_EN/RX_EN
+ * transceiver-enable pins are switched. */
 
 static inline void tx_bit(int bit_value)
 {
-    gpio_set_level(BOARD_PIN_SDI12_DATA, bit_value ? 0 : 1); /* SDI-12 polarity: value 1 -> LOW */
+    gpio_set_level(BOARD_PIN_SDI12_TXD, bit_value ? 0 : 1); /* SDI-12 polarity: value 1 -> LOW */
     esp_rom_delay_us(SDI12_BIT_PERIOD_US);
 }
 
@@ -64,9 +67,9 @@ static void tx_char(char c)
 
 static void send_break_and_marking(void)
 {
-    gpio_set_level(BOARD_PIN_SDI12_DATA, 1); /* SDI-12 polarity: break = space = HIGH */
+    gpio_set_level(BOARD_PIN_SDI12_TXD, 1); /* SDI-12 polarity: break = space = HIGH */
     esp_rom_delay_us(SDI12_BREAK_US);
-    gpio_set_level(BOARD_PIN_SDI12_DATA, 0); /* marking = LOW */
+    gpio_set_level(BOARD_PIN_SDI12_TXD, 0); /* marking = LOW */
     esp_rom_delay_us(SDI12_MARKING_US);
 }
 
@@ -76,11 +79,11 @@ static void send_break_and_marking(void)
 static esp_err_t rx_char(uint32_t timeout_ms, char *out_char)
 {
     xSemaphoreTake(s_edge_sem, 0); /* drain any stale signal */
-    gpio_set_intr_type(BOARD_PIN_SDI12_DATA, GPIO_INTR_POSEDGE);
-    gpio_intr_enable(BOARD_PIN_SDI12_DATA);
+    gpio_set_intr_type(BOARD_PIN_SDI12_RXD, GPIO_INTR_POSEDGE);
+    gpio_intr_enable(BOARD_PIN_SDI12_RXD);
 
     BaseType_t got = xSemaphoreTake(s_edge_sem, pdMS_TO_TICKS(timeout_ms));
-    gpio_intr_disable(BOARD_PIN_SDI12_DATA);
+    gpio_intr_disable(BOARD_PIN_SDI12_RXD);
     if (got != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
@@ -91,7 +94,7 @@ static esp_err_t rx_char(uint32_t timeout_ms, char *out_char)
 
     uint8_t data = 0;
     for (int i = 0; i < 7; i++) {
-        int level = gpio_get_level(BOARD_PIN_SDI12_DATA);
+        int level = gpio_get_level(BOARD_PIN_SDI12_RXD);
         if (!level) {
             data |= (1 << i); /* SDI-12 polarity: LOW -> bit value 1 */
         }
@@ -140,47 +143,85 @@ static esp_err_t rx_response(char *buf, size_t buf_size, uint32_t first_char_tim
 
 /* ---- public API ---- */
 
+/* Configures `pin` as a plain output and drives it to `level`, if the
+ * pin is actually set in board_pins.h (a handful of these - the
+ * RS485/RS232 disable pins - are optional depending on board
+ * revision). */
+static esp_err_t init_output_pin(gpio_num_t pin, int level)
+{
+    if (!board_pin_is_set(pin)) {
+        return ESP_OK;
+    }
+    gpio_config_t conf = {
+        .pin_bit_mask = 1ULL << pin,
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    esp_err_t err = gpio_config(&conf);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return gpio_set_level(pin, level);
+}
+
 esp_err_t sdi12_bus_init(void)
 {
-    if (!board_pin_is_set(BOARD_PIN_SDI12_DATA)) {
-        ESP_LOGE(TAG, "SDI-12 data pin not configured in board_pins.h, SDI-12 bus disabled");
+    if (!board_pin_is_set(BOARD_PIN_SDI12_TXD) || !board_pin_is_set(BOARD_PIN_SDI12_RXD) ||
+        !board_pin_is_set(BOARD_PIN_SDI12_TX_EN) || !board_pin_is_set(BOARD_PIN_SDI12_RX_EN)) {
+        ESP_LOGE(TAG, "SDI-12 pins not configured in board_pins.h, SDI-12 bus disabled");
         return ESP_ERR_INVALID_STATE;
     }
 
-    gpio_config_t io_conf = {
-        .pin_bit_mask = 1ULL << BOARD_PIN_SDI12_DATA,
+    esp_err_t err = init_output_pin(BOARD_PIN_SDI12_TXD, 0); /* idle = marking = LOW */
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    gpio_config_t rx_conf = {
+        .pin_bit_mask = 1ULL << BOARD_PIN_SDI12_RXD,
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_ENABLE, /* defined idle=LOW if nothing drives the line */
         .intr_type = GPIO_INTR_DISABLE,
     };
-    esp_err_t err = gpio_config(&io_conf);
+    err = gpio_config(&rx_conf);
     if (err != ESP_OK) {
         return err;
     }
 
-    if (board_pin_is_set(BOARD_PIN_SDI12_DIR_ENABLE)) {
-        gpio_config_t dir_conf = {
-            .pin_bit_mask = 1ULL << BOARD_PIN_SDI12_DIR_ENABLE,
-            .mode = GPIO_MODE_OUTPUT,
-        };
-        err = gpio_config(&dir_conf);
-        if (err != ESP_OK) {
-            return err;
-        }
-        gpio_set_level(BOARD_PIN_SDI12_DIR_ENABLE, 0); /* default: receive-enabled; TODO verify active level */
+    err = init_output_pin(BOARD_PIN_SDI12_TX_EN, 0); /* start disabled; asserted only while sending */
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = init_output_pin(BOARD_PIN_SDI12_RX_EN, 1); /* left enabled permanently - always listening */
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    /* SER_TX/SER_RX are shared with RS485/RS232 transceivers on this
+     * board - hold their enables low so they don't contend with the
+     * SDI-12 buffers on the same lines. */
+    err = init_output_pin(BOARD_PIN_RS485_TX_EN, 0);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = init_output_pin(BOARD_PIN_RS485_RX_EN, 0);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = init_output_pin(BOARD_PIN_RS232_TX_EN, 0);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = init_output_pin(BOARD_PIN_RS232_RX_EN, 0);
+    if (err != ESP_OK) {
+        return err;
     }
 
     if (board_pin_is_set(BOARD_PIN_SDI12_BUS_POWER)) {
-        gpio_config_t pwr_conf = {
-            .pin_bit_mask = 1ULL << BOARD_PIN_SDI12_BUS_POWER,
-            .mode = GPIO_MODE_OUTPUT,
-        };
-        err = gpio_config(&pwr_conf);
+        err = init_output_pin(BOARD_PIN_SDI12_BUS_POWER, 1); /* power sensors on; TODO verify active level */
         if (err != ESP_OK) {
             return err;
         }
-        gpio_set_level(BOARD_PIN_SDI12_BUS_POWER, 1); /* power sensors on; TODO verify active level */
     }
 
     s_bus_mutex = xSemaphoreCreateMutex();
@@ -193,14 +234,14 @@ esp_err_t sdi12_bus_init(void)
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) { /* INVALID_STATE = already installed elsewhere */
         return err;
     }
-    err = gpio_isr_handler_add(BOARD_PIN_SDI12_DATA, sdi12_gpio_isr, NULL);
+    err = gpio_isr_handler_add(BOARD_PIN_SDI12_RXD, sdi12_gpio_isr, NULL);
     if (err != ESP_OK) {
         return err;
     }
-    gpio_intr_disable(BOARD_PIN_SDI12_DATA);
+    gpio_intr_disable(BOARD_PIN_SDI12_RXD);
 
     s_initialized = true;
-    ESP_LOGI(TAG, "SDI-12 bus initialized on GPIO%d", BOARD_PIN_SDI12_DATA);
+    ESP_LOGI(TAG, "SDI-12 bus initialized (TXD=GPIO%d, RXD=GPIO%d)", BOARD_PIN_SDI12_TXD, BOARD_PIN_SDI12_RXD);
     return ESP_OK;
 }
 
@@ -223,20 +264,14 @@ esp_err_t sdi12_send_command(char addr, const char *cmd_body, char *resp_buf, si
         return ESP_ERR_INVALID_ARG;
     }
 
-    gpio_set_direction(BOARD_PIN_SDI12_DATA, GPIO_MODE_OUTPUT);
-    if (board_pin_is_set(BOARD_PIN_SDI12_DIR_ENABLE)) {
-        gpio_set_level(BOARD_PIN_SDI12_DIR_ENABLE, 1); /* TODO verify active level */
-    }
+    gpio_set_level(BOARD_PIN_SDI12_TX_EN, 1); /* enable the TX buffer onto the bus; TODO verify active level */
 
     send_break_and_marking();
     for (const char *p = cmd; *p; p++) {
         tx_char(*p);
     }
 
-    if (board_pin_is_set(BOARD_PIN_SDI12_DIR_ENABLE)) {
-        gpio_set_level(BOARD_PIN_SDI12_DIR_ENABLE, 0);
-    }
-    gpio_set_direction(BOARD_PIN_SDI12_DATA, GPIO_MODE_INPUT);
+    gpio_set_level(BOARD_PIN_SDI12_TX_EN, 0); /* back to high-Z; RX_EN stays enabled permanently */
 
     esp_err_t err = rx_response(resp_buf, resp_buf_len, response_timeout_ms, 100);
 

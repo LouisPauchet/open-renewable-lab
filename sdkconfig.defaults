@@ -13,9 +13,13 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
-# UART0 is dedicated to the cellular modem AT interface on the Walter module;
-# route the IDF console/log output to USB-Serial-JTAG instead so modem
-# communication is never contended with boot logs.
+# The Walter Feels schematic shows IO43/IO44 (UART0's default TX0/RX0
+# pins) reused as 12V_EN/CAN_EN on the carrier board, not wired to the
+# cellular modem - the modem link is apparently internal to the Walter
+# module. Console output still defaults to USB-Serial-JTAG rather than
+# a UART pin regardless: it's a clean choice for a headless field
+# device either way and avoids relying on whichever UART the
+# walter-modem library ends up claiming internally.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # FreeRTOS / watchdog tuning - generous timeout since SDI-12 measurement

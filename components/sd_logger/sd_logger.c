@@ -7,8 +7,7 @@
 #include <time.h>
 
 #include "board_pins.h"
-#include "driver/sdspi_host.h"
-#include "driver/spi_master.h"
+#include "driver/sdmmc_host.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 #include "esp_vfs_fat.h"
@@ -102,35 +101,22 @@ static esp_err_t ensure_data_dir(void)
 
 esp_err_t sd_logger_init(void)
 {
-    if (!board_pin_is_set(BOARD_PIN_SD_SPI_MISO) || !board_pin_is_set(BOARD_PIN_SD_SPI_MOSI) ||
-        !board_pin_is_set(BOARD_PIN_SD_SPI_SCLK) || !board_pin_is_set(BOARD_PIN_SD_SPI_CS)) {
-        ESP_LOGE(TAG, "SD SPI pins not configured in board_pins.h, SD logging disabled");
+    if (!board_pin_is_set(BOARD_PIN_SD_CLK) || !board_pin_is_set(BOARD_PIN_SD_CMD) ||
+        !board_pin_is_set(BOARD_PIN_SD_D0)) {
+        ESP_LOGE(TAG, "SD SDMMC pins not configured in board_pins.h, SD logging disabled");
         return ESP_ERR_INVALID_STATE;
     }
 
-    spi_bus_config_t bus_cfg = {
-        .mosi_io_num = BOARD_PIN_SD_SPI_MOSI,
-        .miso_io_num = BOARD_PIN_SD_SPI_MISO,
-        .sclk_io_num = BOARD_PIN_SD_SPI_SCLK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = 4000,
-    };
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
 
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = BOARD_SD_SPI_HOST;
-
-    esp_err_t err = spi_bus_initialize(host.slot, &bus_cfg, SDSPI_DEFAULT_DMA);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "spi_bus_initialize failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    sdspi_device_config_t slot_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_cfg.gpio_cs = BOARD_PIN_SD_SPI_CS;
-    slot_cfg.host_id = host.slot;
+    sdmmc_slot_config_t slot_cfg = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot_cfg.width = 1; /* only CMD/CLK/D0 are wired on Walter Feels - no 4-bit mode */
+    slot_cfg.clk = BOARD_PIN_SD_CLK;
+    slot_cfg.cmd = BOARD_PIN_SD_CMD;
+    slot_cfg.d0 = BOARD_PIN_SD_D0;
+    slot_cfg.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
     if (board_pin_is_set(BOARD_PIN_SD_CARD_DETECT)) {
-        slot_cfg.gpio_cd = BOARD_PIN_SD_CARD_DETECT;
+        slot_cfg.cd = BOARD_PIN_SD_CARD_DETECT;
     }
 
     esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {
@@ -139,24 +125,21 @@ esp_err_t sd_logger_init(void)
         .allocation_unit_size = 16 * 1024,
     };
 
-    err = esp_vfs_fat_sdspi_mount(SD_LOGGER_MOUNT_POINT, &host, &slot_cfg, &mount_cfg, &s_card);
+    esp_err_t err = esp_vfs_fat_sdmmc_mount(SD_LOGGER_MOUNT_POINT, &host, &slot_cfg, &mount_cfg, &s_card);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "failed to mount SD card: %s", esp_err_to_name(err));
-        spi_bus_free(host.slot);
         return err;
     }
 
     err = ensure_data_dir();
     if (err != ESP_OK) {
         esp_vfs_fat_sdcard_unmount(SD_LOGGER_MOUNT_POINT, s_card);
-        spi_bus_free(host.slot);
         return err;
     }
 
     s_queue = xQueueCreate(RESULT_QUEUE_LEN, sizeof(aggregate_result_t));
     if (!s_queue) {
         esp_vfs_fat_sdcard_unmount(SD_LOGGER_MOUNT_POINT, s_card);
-        spi_bus_free(host.slot);
         return ESP_ERR_NO_MEM;
     }
 
@@ -165,7 +148,6 @@ esp_err_t sd_logger_init(void)
         vQueueDelete(s_queue);
         s_queue = NULL;
         esp_vfs_fat_sdcard_unmount(SD_LOGGER_MOUNT_POINT, s_card);
-        spi_bus_free(host.slot);
         return ESP_ERR_NO_MEM;
     }
 

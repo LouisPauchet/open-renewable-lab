@@ -13,8 +13,8 @@ extern "C" {
 
 #define SD_LOGGER_MOUNT_POINT "/sdcard"
 
-/* Mounts the microSD card (SPI mode, pins from board_pins.h) and starts
- * the CSV writer task. If the required pins aren't configured yet, or
+/* Mounts the microSD card (SDMMC 1-bit mode, pins from board_pins.h)
+ * and starts the CSV writer task. If the required pins aren't configured yet, or
  * the mount fails (no card present, card unreadable, ...), this logs an
  * error and returns the failure - it does NOT abort boot. Callers
  * should treat SD logging as best-effort: check sd_logger_is_ready()

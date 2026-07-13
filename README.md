@@ -24,23 +24,26 @@ idf.py build
 idf.py -p <PORT> flash monitor
 ```
 
-## Before first flash: verify `board_pins.h`
+## Before first flash: check `board_pins.h`
 
 `components/board_pins/include/board_pins.h` holds every Walter Feels GPIO
-assignment (SDI-12 data/direction/power, I2C SDA/SCL, SD card SPI pins,
-sensor power switch) as an explicit "not configured" placeholder - none of
-them were verified against real hardware (the schematic PDF couldn't be
-parsed while writing this firmware). Each subsystem safely no-ops (logs a
-warning, falls back to a synthetic stub sensor where relevant) if its pins
-are left unset, so the firmware boots and the portal works even before this
-is done - but no real sensor/SD/etc. will function until you:
+assignment. SDI-12 (TXD/RXD/TX_EN/RX_EN + 12V_EN), I2C (SDA/SCL/BUSPOW), and
+SD card (SDMMC CMD/CLK/D0) pin *numbers* come straight from the schematic and
+are confirmed. Still open:
 
-1. Open the Walter Feels schematic (or check the board silkscreen) and fill
-   in every `BOARD_PIN_*` value in `board_pins.h`.
-2. If a pin's direction-enable/power-switch polarity is marked "TODO verify
-   active level" in `board_pins.h` or `sdi12_bus.c`, confirm it before
-   trusting sensor readings - a wrong guess there just won't work, but it's
-   worth checking with a meter first.
+1. **Enable-pin polarities** (SDI-12 TX_EN/RX_EN, 12V_EN, I2C_BUSPOW) are
+   marked "TODO verify active level" in `board_pins.h`/`sdi12_bus.c` -
+   inferred from the SN74LV1T126 buffer's datasheet (active-HIGH), not
+   independently confirmed. If a sensor doesn't respond, check with a meter
+   before assuming the driver is wrong.
+2. **SD card-detect, status LED, and force-AP button** pins are still
+   unset placeholders (not shown on the schematic pages available while
+   writing this) - SD logging works fine without card-detect, the other two
+   are optional UX niceties.
+
+Each subsystem safely no-ops (logs a warning, falls back to a synthetic stub
+sensor where relevant) if its required pins are left unset, so the firmware
+boots and the portal works even before any of the above is resolved.
 
 ## Known low-confidence areas (verify before relying on them)
 
@@ -49,9 +52,10 @@ or the `walter-modem`/`esp-mqtt` library sources - most of the firmware was
 checked against the actual ESP-IDF v6.0.2 headers on disk, but these
 specific pieces could not be and should be reviewed first:
 
-- **`components/sdi12_bus/`** - bit-banged SDI-12 physical layer (mark/space
-  polarity, break/marking timing). Verify with a logic analyzer against one
-  known-good sensor.
+- **`components/sdi12_bus/`** - pin assignments are confirmed from the
+  schematic, but the bit-banged physical layer itself (timing, enable-pin
+  polarity) is still unverified against real hardware. Check with a logic
+  analyzer against one known-good sensor.
 - **`components/cellular_transport/` and
   `components/mqtt_client/backend_walter_mqtt.cpp`** - every `WalterModem`
   method call is a best-effort guess from a research summary, not the real

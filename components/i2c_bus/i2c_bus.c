@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "board_pins.h"
+#include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -28,6 +29,18 @@ esp_err_t i2c_bus_init(void)
     if (!board_pin_is_set(BOARD_PIN_I2C_SDA) || !board_pin_is_set(BOARD_PIN_I2C_SCL)) {
         ESP_LOGE(TAG, "I2C pins not configured in board_pins.h, I2C bus disabled");
         return ESP_ERR_INVALID_STATE;
+    }
+
+    if (board_pin_is_set(BOARD_PIN_I2C_BUS_POWER)) {
+        gpio_config_t pwr_conf = {
+            .pin_bit_mask = 1ULL << BOARD_PIN_I2C_BUS_POWER,
+            .mode = GPIO_MODE_OUTPUT,
+        };
+        esp_err_t pwr_err = gpio_config(&pwr_conf);
+        if (pwr_err != ESP_OK) {
+            return pwr_err;
+        }
+        gpio_set_level(BOARD_PIN_I2C_BUS_POWER, 1); /* power external I2C sensors on; TODO verify active level */
     }
 
     i2c_master_bus_config_t bus_cfg = {

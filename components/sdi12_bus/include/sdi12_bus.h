@@ -1,23 +1,23 @@
 #pragma once
 
 /*
- * Bit-banged SDI-12 driver (single half-duplex GPIO line, per SDI-12
- * v1.4: 1200 baud, 7 data bits, even parity, 1 stop bit, with inverted
- * mark/space polarity vs. standard UART).
+ * Bit-banged SDI-12 driver, per SDI-12 v1.4: 1200 baud, 7 data bits,
+ * even parity, 1 stop bit, inverted mark/space polarity vs. standard
+ * UART. Matches Walter Feels' actual topology (confirmed from
+ * schematic): separate TXD/RXD GPIOs through two SN74LV1T126 tri-state
+ * buffers (BOARD_PIN_SDI12_TXD/RXD), each gated by its own enable pin
+ * (BOARD_PIN_SDI12_TX_EN/RX_EN) - not a single shared bidirectional
+ * line. SER_TX/SER_RX are also muxed with RS485/RS232 transceivers on
+ * this board; sdi12_bus_init() holds those disabled.
  *
- * *** UNVERIFIED AGAINST REAL HARDWARE ***
- * This was written without access to a Walter Feels board, an
- * oscilloscope, or a real SDI-12 sensor - it implements the spec as
- * documented, but timing/polarity assumptions should be checked with a
- * logic analyzer against one known-good sensor before trusting
- * readings. In particular:
- *  - Assumes the carrier board's SDI-12 transceiver presents TRUE
- *    (non-inverted) SDI-12 electrical levels on the GPIO: idle/mark =
- *    LOW, break/space = HIGH. If the transceiver inverts, flip the
- *    level in every gpio_set_level()/gpio_get_level() call in
- *    sdi12_bus.c (search for "SDI-12 polarity").
- *  - Assumes BOARD_PIN_SDI12_DIR_ENABLE (if present) is active-HIGH to
- *    enable the transmitter; verify against the schematic.
+ * *** STILL UNVERIFIED AGAINST REAL HARDWARE ***
+ * Pin numbers come from the user-supplied schematic and are
+ * confirmed, but this was written without an oscilloscope or a real
+ * SDI-12 sensor to test against - the bit timing and the SN74LV1T126's
+ * assumed active-HIGH enable polarity should be checked with a logic
+ * analyzer against one known-good sensor before trusting readings. If
+ * the enable polarity is actually inverted, flip the `1`/`0` levels
+ * used for BOARD_PIN_SDI12_TX_EN/RX_EN in sdi12_bus.c.
  *
  * The bus is intended to be called from a single task at a time
  * (sampling_engine's SDI-12 scheduler task in normal operation); an
