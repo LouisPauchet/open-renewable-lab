@@ -3,6 +3,7 @@
 #include "config_store.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "mqtt_client_bridge.h"
 #include "net_manager.h"
 #include "sd_logger.h"
 #include "time_sync.h"
@@ -55,9 +56,8 @@ static esp_err_t status_handler(httpd_req_t *req)
     }
     cJSON_AddNumberToObject(o, "sd_drop_count", sd_logger_get_drop_count());
 
-    /* MQTT connection state is wired up once mqtt_client lands. */
     cJSON_AddBoolToObject(o, "mqtt_enabled", cfg.mqtt.enabled);
-    cJSON_AddBoolToObject(o, "mqtt_connected", false);
+    cJSON_AddBoolToObject(o, "mqtt_connected", mqttc_is_ready());
 
     cJSON_AddNumberToObject(o, "variable_count", cfg.variable_count);
     cJSON_AddNumberToObject(o, "config_generation", cfg.generation);

@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "mqtt_client_bridge.h"
 #include "net_manager.h"
 #include "sampling_engine.h"
 #include "sd_logger.h"
@@ -72,8 +73,9 @@ void app_main(void)
     ESP_ERROR_CHECK(net_manager_init());
     ESP_ERROR_CHECK(web_portal_init());
     ESP_ERROR_CHECK(time_sync_init());
+    ESP_ERROR_CHECK(mqttc_init());
 
     /* Further component init/task spawn is added incrementally as each
-     * subsystem (mqtt_client, sdi12_bus, i2c_bus, cellular_transport)
-     * lands - see the project plan for build order. */
+     * subsystem (sdi12_bus, i2c_bus, cellular_transport) lands - see
+     * the project plan for build order. */
 }
