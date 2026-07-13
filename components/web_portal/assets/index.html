@@ -66,6 +66,10 @@
   <form id="network-form"></form>
   <div class="msg" id="network-msg"></div>
 
+  <h2>Position reporting</h2>
+  <form id="position-form"></form>
+  <div class="msg" id="position-msg"></div>
+
   <h2>Portal password</h2>
   <form id="password-form">
     <label>Current password <input type="password" id="pw-old" required></label>
@@ -139,6 +143,7 @@ async function refreshStatus() {
   let s;
   try { s = await api("/api/status"); } catch { return; }
   const rows = [
+    ["Device ID", s.device_id],
     ["Uptime", s.uptime_s + " s"],
     ["Free heap", s.free_heap_bytes + " bytes"],
     ["AP active", s.ap_active], ["AP clients", s.ap_client_count],
@@ -147,9 +152,16 @@ async function refreshStatus() {
     ["SD ready", s.sd_ready],
     ["SD free/total", (s.sd_free_bytes || 0) + " / " + (s.sd_total_bytes || 0)],
     ["SD drop count", s.sd_drop_count],
-    ["MQTT enabled", s.mqtt_enabled], ["MQTT connected", s.mqtt_connected],
-    ["Variables", s.variable_count], ["Config generation", s.config_generation],
+    ["MQTT enabled", s.mqtt_enabled],
+    ["MQTT connected", s.mqtt_connected + (s.mqtt_batch_enabled ? " (batched - brief per window)" : "")],
   ];
+  if (s.position_available) {
+    rows.push(["Position enabled", s.position_enabled]);
+    rows.push(["Last fix", s.position_fix_valid
+      ? (s.position_latitude.toFixed(5) + ", " + s.position_longitude.toFixed(5) + " (" + s.position_altitude_m.toFixed(0) + "m)")
+      : "none yet"]);
+  }
+  rows.push(["Variables", s.variable_count], ["Config generation", s.config_generation]);
   $("#status-grid").innerHTML = rows.map(r => `<div>${r[0]}</div><div>${r[1]}</div>`).join("");
 }
 
@@ -310,6 +322,8 @@ function mqttFormFields(m) {
     </div>
     <label>Password ${m.password_set ? "<small>(already set - leave blank to keep)</small>" : ""} <input type="password" name="password"></label>
     <label>Topic prefix <input name="topic_prefix" value="${m.topic_prefix}"></label>
+    <label><input type="checkbox" name="batch_enabled" ${m.batch_enabled ? "checked" : ""}> Batch transmission (connect, send buffered data, disconnect - saves power, especially over cellular)</label>
+    <label>Batch interval (ms) <input type="number" name="batch_interval_ms" value="${m.batch_interval_ms}"></label>
     <button type="submit">Save MQTT settings</button>
   `;
 }
@@ -325,6 +339,7 @@ async function refreshMqtt() {
       enabled: !!fd.get("enabled"), host: fd.get("host"), port: parseInt(fd.get("port"), 10),
       use_tls: !!fd.get("use_tls"), tls_allow_insecure: !!fd.get("tls_allow_insecure"),
       client_id: fd.get("client_id"), username: fd.get("username"), topic_prefix: fd.get("topic_prefix"),
+      batch_enabled: !!fd.get("batch_enabled"), batch_interval_ms: parseInt(fd.get("batch_interval_ms"), 10),
     };
     if (fd.get("password")) body.password = fd.get("password");
     try {
@@ -381,6 +396,34 @@ async function refreshNetwork() {
   };
 }
 
+/* ---- Position (GNSS) reporting ---- */
+function positionFormFields(p) {
+  return `
+    ${p.available ? "" : "<small>Position reporting requires network transport set to Cellular (Walter's GNSS is part of the cellular modem).</small>"}
+    <label><input type="checkbox" name="enabled" ${p.enabled ? "checked" : ""} ${p.available ? "" : "disabled"}> Enabled</label>
+    <label>Report interval (ms) <input type="number" name="interval_ms" value="${p.interval_ms}" ${p.available ? "" : "disabled"}></label>
+    <button type="submit" ${p.available ? "" : "disabled"}>Save position settings</button>
+  `;
+}
+async function refreshPosition() {
+  let p;
+  try { p = await api("/api/settings/position"); } catch { return; }
+  const form = $("#position-form");
+  form.innerHTML = positionFormFields(p);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const body = { enabled: !!fd.get("enabled"), interval_ms: parseInt(fd.get("interval_ms"), 10) };
+    try {
+      await api("/api/settings/position", { method: "PUT", body });
+      $("#position-msg").textContent = "Saved."; $("#position-msg").className = "msg ok";
+      await refreshPosition();
+    } catch (err) {
+      $("#position-msg").textContent = "Save failed: " + err.message; $("#position-msg").className = "msg err";
+    }
+  };
+}
+
 /* ---- password ---- */
 $("#password-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -424,7 +467,7 @@ $("#reboot-btn").addEventListener("click", async () => {
 });
 
 async function refreshAll() {
-  await Promise.all([refreshStatus(), refreshVariables(), refreshMqtt(), refreshNetwork()]);
+  await Promise.all([refreshStatus(), refreshVariables(), refreshMqtt(), refreshNetwork(), refreshPosition()]);
 }
 setInterval(() => { if (!$("#app").classList.contains("hidden")) refreshStatus(); }, 5000);
 

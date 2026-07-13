@@ -44,6 +44,8 @@ static esp_err_t mqtt_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(o, "username", m.username);
     cJSON_AddBoolToObject(o, "password_set", strlen(m.password) > 0); /* password itself is write-only */
     cJSON_AddStringToObject(o, "topic_prefix", m.topic_prefix);
+    cJSON_AddBoolToObject(o, "batch_enabled", m.batch_enabled);
+    cJSON_AddNumberToObject(o, "batch_interval_ms", m.batch_interval_ms);
     return wp_send_json(req, o);
 }
 
@@ -70,6 +72,8 @@ static esp_err_t mqtt_put_handler(httpd_req_t *req)
     json_str(body, "client_id", m.client_id, sizeof(m.client_id), current.client_id);
     json_str(body, "username", m.username, sizeof(m.username), current.username);
     json_str(body, "topic_prefix", m.topic_prefix, sizeof(m.topic_prefix), current.topic_prefix);
+    m.batch_enabled = json_bool(body, "batch_enabled", current.batch_enabled);
+    m.batch_interval_ms = (uint32_t)json_int(body, "batch_interval_ms", (int)current.batch_interval_ms);
 
     const cJSON *pw = cJSON_GetObjectItemCaseSensitive(body, "password");
     if (pw && cJSON_IsString(pw) && strlen(pw->valuestring) > 0) {
@@ -82,6 +86,9 @@ static esp_err_t mqtt_put_handler(httpd_req_t *req)
     }
     if (m.enabled && m.port == 0) {
         return wp_send_error(req, "400 Bad Request", "invalid port");
+    }
+    if (m.batch_enabled && m.batch_interval_ms == 0) {
+        return wp_send_error(req, "400 Bad Request", "batch_interval_ms must be > 0 when batching is enabled");
     }
 
     config_store_set_mqtt_settings(&m);
@@ -176,6 +183,56 @@ static esp_err_t network_put_handler(httpd_req_t *req)
     cJSON *resp = cJSON_CreateObject();
     cJSON_AddBoolToObject(resp, "ok", true);
     cJSON_AddBoolToObject(resp, "reboot_required", transport_changed);
+    return wp_send_json(req, resp);
+}
+
+/* ---- Position (GNSS) reporting settings ---- */
+
+static esp_err_t position_get_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    position_settings_t p;
+    config_store_get_position_settings(&p);
+
+    net_settings_t n;
+    config_store_get_net_settings(&n);
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "enabled", p.enabled);
+    cJSON_AddNumberToObject(o, "interval_ms", p.interval_ms);
+    cJSON_AddBoolToObject(o, "available", n.transport == TRANSPORT_CELLULAR);
+    return wp_send_json(req, o);
+}
+
+static esp_err_t position_put_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    cJSON *body;
+    if (wp_read_json_body(req, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+
+    position_settings_t current;
+    config_store_get_position_settings(&current);
+
+    position_settings_t p = current;
+    p.enabled = json_bool(body, "enabled", current.enabled);
+    p.interval_ms = (uint32_t)json_int(body, "interval_ms", (int)current.interval_ms);
+    cJSON_Delete(body);
+
+    if (p.enabled && p.interval_ms == 0) {
+        return wp_send_error(req, "400 Bad Request", "interval_ms must be > 0 when position reporting is enabled");
+    }
+
+    config_store_set_position_settings(&p);
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddBoolToObject(resp, "ok", true);
     return wp_send_json(req, resp);
 }
 
@@ -329,6 +386,11 @@ void api_settings_register_routes(httpd_handle_t server)
     u = (httpd_uri_t){ .uri = "/api/settings/network", .method = HTTP_GET, .handler = network_get_handler };
     httpd_register_uri_handler(server, &u);
     u = (httpd_uri_t){ .uri = "/api/settings/network", .method = HTTP_PUT, .handler = network_put_handler };
+    httpd_register_uri_handler(server, &u);
+
+    u = (httpd_uri_t){ .uri = "/api/settings/position", .method = HTTP_GET, .handler = position_get_handler };
+    httpd_register_uri_handler(server, &u);
+    u = (httpd_uri_t){ .uri = "/api/settings/position", .method = HTTP_PUT, .handler = position_put_handler };
     httpd_register_uri_handler(server, &u);
 
     u = (httpd_uri_t){ .uri = "/api/settings/password", .method = HTTP_PUT, .handler = password_put_handler };

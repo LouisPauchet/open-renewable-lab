@@ -2,6 +2,7 @@
 
 #include "cellular_transport.h"
 #include "config_store.h"
+#include "device_id.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "mqtt_client_bridge.h"
@@ -35,6 +36,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     bool time_synced = now >= TIME_SYNC_EPOCH_THRESHOLD;
 
     cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "device_id", device_id_get());
     cJSON_AddNumberToObject(o, "uptime_s", esp_timer_get_time() / 1000000);
     cJSON_AddNumberToObject(o, "free_heap_bytes", esp_get_free_heap_size());
 
@@ -62,7 +64,24 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(o, "sd_drop_count", sd_logger_get_drop_count());
 
     cJSON_AddBoolToObject(o, "mqtt_enabled", cfg.mqtt.enabled);
+    cJSON_AddBoolToObject(o, "mqtt_batch_enabled", cfg.mqtt.batch_enabled);
+    /* In batch mode this is only briefly true during each transmit
+     * window (connection is closed the rest of the time by design). */
     cJSON_AddBoolToObject(o, "mqtt_connected", mqttc_is_ready());
+
+    cJSON_AddBoolToObject(o, "position_enabled", cfg.position.enabled);
+    cJSON_AddBoolToObject(o, "position_available", cfg.net.transport == TRANSPORT_CELLULAR);
+    if (cfg.net.transport == TRANSPORT_CELLULAR) {
+        gnss_fix_t fix;
+        cellular_transport_get_last_fix(&fix);
+        cJSON_AddBoolToObject(o, "position_fix_valid", fix.valid);
+        if (fix.valid) {
+            cJSON_AddNumberToObject(o, "position_latitude", fix.latitude);
+            cJSON_AddNumberToObject(o, "position_longitude", fix.longitude);
+            cJSON_AddNumberToObject(o, "position_altitude_m", fix.altitude_m);
+            cJSON_AddNumberToObject(o, "position_timestamp_unix", (double)fix.timestamp_unix);
+        }
+    }
 
     cJSON_AddNumberToObject(o, "variable_count", cfg.variable_count);
     cJSON_AddNumberToObject(o, "config_generation", cfg.generation);
