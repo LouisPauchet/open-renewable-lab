@@ -4,21 +4,43 @@
 #include <string.h>
 
 #include "ap_policy.h"
+#include "config_store.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 
 static const char *TAG = "net_manager";
 
-static void apply_wifi_mode_for_ap_state(ap_state_t old_state, ap_state_t new_state)
-{
-    (void)old_state;
+#define STA_RECONNECT_DELAY_US (5 * 1000 * 1000)
 
-    /* STA-mode handling (WiFi as data transport) is layered on top of
-     * this in a later build stage; for now the radio only ever needs to
-     * be AP or fully off. */
-    wifi_mode_t desired = (new_state == AP_STATE_OFF) ? WIFI_MODE_NULL : WIFI_MODE_AP;
+static bool s_sta_connected;
+static esp_timer_handle_t s_sta_reconnect_timer;
+
+static wifi_mode_t compute_desired_mode(void)
+{
+    net_settings_t net;
+    config_store_get_net_settings(&net);
+
+    bool ap_on = ap_policy_get_state() != AP_STATE_OFF;
+    bool sta_on = (net.transport == TRANSPORT_WIFI);
+
+    if (ap_on && sta_on) {
+        return WIFI_MODE_APSTA;
+    }
+    if (ap_on) {
+        return WIFI_MODE_AP;
+    }
+    if (sta_on) {
+        return WIFI_MODE_STA;
+    }
+    return WIFI_MODE_NULL;
+}
+
+static void apply_wifi_mode(void)
+{
+    wifi_mode_t desired = compute_desired_mode();
 
     wifi_mode_t current;
     if (esp_wifi_get_mode(&current) == ESP_OK && current == desired) {
@@ -30,7 +52,38 @@ static void apply_wifi_mode_for_ap_state(ap_state_t old_state, ap_state_t new_st
         ESP_LOGE(TAG, "esp_wifi_set_mode(%d) failed: %s", (int)desired, esp_err_to_name(err));
         return;
     }
-    ESP_LOGI(TAG, "wifi mode -> %d (ap_state=%d)", (int)desired, (int)new_state);
+    ESP_LOGI(TAG, "wifi mode -> %d", (int)desired);
+}
+
+static void apply_wifi_mode_for_ap_state(ap_state_t old_state, ap_state_t new_state)
+{
+    (void)old_state;
+    (void)new_state;
+    apply_wifi_mode();
+}
+
+static void sta_reconnect_timer_cb(void *arg)
+{
+    (void)arg;
+    esp_wifi_connect();
+}
+
+static void sta_event_handler(void *arg, esp_event_base_t base, int32_t id, void *event_data)
+{
+    (void)arg;
+    (void)event_data;
+
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        s_sta_connected = false;
+        ESP_LOGW(TAG, "STA disconnected, retrying in %d s", STA_RECONNECT_DELAY_US / 1000000);
+        esp_timer_stop(s_sta_reconnect_timer); /* no-op if not running */
+        esp_timer_start_once(s_sta_reconnect_timer, STA_RECONNECT_DELAY_US);
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        s_sta_connected = true;
+        ESP_LOGI(TAG, "STA connected, got IP");
+    }
 }
 
 esp_err_t net_manager_init(void)
@@ -38,11 +91,24 @@ esp_err_t net_manager_init(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_ap();
+    esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, sta_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, sta_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, sta_event_handler, NULL));
+
+    const esp_timer_create_args_t sta_targs = { .callback = sta_reconnect_timer_cb, .name = "sta_reconnect" };
+    ESP_ERROR_CHECK(esp_timer_create(&sta_targs, &s_sta_reconnect_timer));
+
+    net_settings_t net;
+    config_store_get_net_settings(&net);
+    bool sta_wanted = (net.transport == TRANSPORT_WIFI);
+
+    /* Boot always starts in the AP boot-grace window (AP forced on). */
+    ESP_ERROR_CHECK(esp_wifi_set_mode(sta_wanted ? WIFI_MODE_APSTA : WIFI_MODE_AP));
 
     uint8_t mac[6];
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_AP, mac));
@@ -54,14 +120,22 @@ esp_err_t net_manager_init(void)
     ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
     ap_cfg.ap.max_connection = 4;
     ap_cfg.ap.ssid_hidden = 0;
-
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg));
+
+    if (sta_wanted) {
+        wifi_config_t sta_cfg = { 0 };
+        snprintf((char *)sta_cfg.sta.ssid, sizeof(sta_cfg.sta.ssid), "%s", net.wifi_sta_ssid);
+        snprintf((char *)sta_cfg.sta.password, sizeof(sta_cfg.sta.password), "%s", net.wifi_sta_password);
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
+    }
+
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ap_policy_set_callback(apply_wifi_mode_for_ap_state);
     ESP_ERROR_CHECK(ap_policy_init());
 
-    ESP_LOGI(TAG, "SoftAP '%s' started (open network, portal login required)", ap_cfg.ap.ssid);
+    ESP_LOGI(TAG, "SoftAP '%s' started (open network, portal login required)%s", ap_cfg.ap.ssid,
+             sta_wanted ? "; connecting to configured WiFi STA" : "");
     return ESP_OK;
 }
 
@@ -78,4 +152,9 @@ bool net_manager_ap_is_active(void)
 uint8_t net_manager_ap_client_count(void)
 {
     return ap_policy_client_count();
+}
+
+bool net_manager_sta_is_connected(void)
+{
+    return s_sta_connected;
 }

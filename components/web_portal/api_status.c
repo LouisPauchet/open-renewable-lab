@@ -5,11 +5,8 @@
 #include "esp_timer.h"
 #include "net_manager.h"
 #include "sd_logger.h"
+#include "time_sync.h"
 #include "web_portal_internal.h"
-
-/* Mirrors sampling_engine's TIME_SYNC_EPOCH_THRESHOLD - system time
- * before this (~2023-11-14) means SNTP/NITZ hasn't set the clock yet. */
-#define TIME_SYNC_EPOCH_THRESHOLD 1700000000
 
 static const char *transport_name(net_transport_t t)
 {
@@ -43,9 +40,9 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(o, "ap_client_count", net_manager_ap_client_count());
 
     cJSON_AddStringToObject(o, "transport", transport_name(cfg.net.transport));
-    /* WiFi-STA/cellular connection state is wired up once net_manager
-     * grows STA + cellular handling in a later build stage. */
-    cJSON_AddBoolToObject(o, "data_connection_up", false);
+    /* Cellular link state is wired up once cellular_transport lands. */
+    bool data_up = (cfg.net.transport == TRANSPORT_WIFI) ? net_manager_sta_is_connected() : false;
+    cJSON_AddBoolToObject(o, "data_connection_up", data_up);
 
     cJSON_AddBoolToObject(o, "time_synced", time_synced);
     cJSON_AddNumberToObject(o, "time_unix", (double)now);

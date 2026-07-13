@@ -12,6 +12,7 @@
 #include "sampling_engine.h"
 #include "sd_logger.h"
 #include "stub_sensor.h"
+#include "time_sync.h"
 #include "web_portal.h"
 
 static const char *TAG = "app_main";
@@ -70,6 +71,7 @@ void app_main(void)
 
     ESP_ERROR_CHECK(net_manager_init());
     ESP_ERROR_CHECK(web_portal_init());
+    ESP_ERROR_CHECK(time_sync_init());
 
     /* Further component init/task spawn is added incrementally as each
      * subsystem (mqtt_client, sdi12_bus, i2c_bus, cellular_transport)

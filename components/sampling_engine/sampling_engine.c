@@ -8,15 +8,12 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
+#include "time_sync.h"
 
 static const char *TAG = "sampling_engine";
 
 #define SCHEDULER_TICK_MS 200
 #define MAX_RESULT_SINKS 4
-
-/* System time before this (~2023-11-14) is treated as "not yet synced"
- * (ESP32 boots at epoch 0 plus uptime until SNTP/NITZ sets the clock). */
-#define TIME_SYNC_EPOCH_THRESHOLD 1700000000
 
 typedef struct {
     uint16_t variable_id;

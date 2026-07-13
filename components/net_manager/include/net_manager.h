@@ -25,6 +25,10 @@ void net_manager_force_ap_on(void);
 bool net_manager_ap_is_active(void);
 uint8_t net_manager_ap_client_count(void);
 
+/* True once the STA interface has an IP (only meaningful when
+ * net_settings.transport == TRANSPORT_WIFI; always false otherwise). */
+bool net_manager_sta_is_connected(void);
+
 #ifdef __cplusplus
 }
 #endif
