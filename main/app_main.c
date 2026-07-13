@@ -2,6 +2,7 @@
 
 #include "cellular_transport.h"
 #include "config_store.h"
+#include "device_id.h"
 #include "esp_chip_info.h"
 #include "esp_flash.h"
 #include "esp_log.h"
@@ -9,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "gnss_position.h"
 #include "i2c_bus.h"
 #include "i2c_sensor_registry.h"
 #include "mqtt_client_bridge.h"
@@ -47,7 +49,7 @@ void app_main(void)
     uint32_t flash_size = 0;
     esp_flash_get_size(NULL, &flash_size);
 
-    ESP_LOGI(TAG, "Walter sensor node booting");
+    ESP_LOGI(TAG, "Walter sensor node booting, device_id=%s", device_id_get());
     ESP_LOGI(TAG, "chip: %s, cores: %d, revision: v%d.%d",
              CONFIG_IDF_TARGET, chip_info.cores,
              chip_info.revision / 100, chip_info.revision % 100);
@@ -89,7 +91,9 @@ void app_main(void)
     ESP_ERROR_CHECK(time_sync_init());
 
     if (cfg.net.transport == TRANSPORT_CELLULAR) {
-        if (cellular_transport_init() != ESP_OK) {
+        if (cellular_transport_init() == ESP_OK) {
+            ESP_ERROR_CHECK(gnss_position_init());
+        } else {
             ESP_LOGE(TAG, "cellular_transport_init failed - see its header for the unverified-SDK-calls caveat");
         }
     }

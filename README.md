@@ -2,8 +2,16 @@
 
 ESP-IDF firmware for a student-configurable environmental datalogger/gateway
 built on the Walter ESP32-S3 module + Walter Feels carrier board: SDI-12 and
-I2C sensors, SD card logging, MQTT (WiFi or cellular transport), and a
-captive-portal web UI for setup - no code changes needed per deployment.
+I2C sensors, SD card logging, MQTT (WiFi or cellular transport), GNSS
+position logging (cellular only), scheduled batch MQTT transmission for
+power saving, and a captive-portal web UI for setup - no code changes needed
+per deployment.
+
+Every device has a stable ID derived from its factory MAC address
+(`device_id_get()`), shown in the portal's status panel, written into every
+CSV file's header line, and included in every MQTT topic
+(`<topic_prefix>/<device_id>/<variable name>`) so multiple nodes can share
+one broker/topic_prefix.
 
 ## Prerequisites
 
@@ -56,11 +64,11 @@ specific pieces could not be and should be reviewed first:
   schematic, but the bit-banged physical layer itself (timing, enable-pin
   polarity) is still unverified against real hardware. Check with a logic
   analyzer against one known-good sensor.
-- **`components/cellular_transport/` and
-  `components/mqtt_client/backend_walter_mqtt.cpp`** - every `WalterModem`
-  method call is a best-effort guess from a research summary, not the real
-  header (marked `VERIFY` inline throughout both files). Only relevant if
-  you set network transport to "Cellular" in the portal.
+- **`components/cellular_transport/` (including its GNSS fix acquisition)
+  and `components/mqtt_client/backend_walter_mqtt.cpp`** - every
+  `WalterModem` method call is a best-effort guess from a research summary,
+  not the real header (marked `VERIFY` inline throughout both files). Only
+  relevant if you set network transport to "Cellular" in the portal.
 - **`components/mqtt_client/backend_esp_mqtt.c`** - written against the
   documented stable esp-mqtt API, but unverified locally since the
   submodule source was missing (see Prerequisites above).
