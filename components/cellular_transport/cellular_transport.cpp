@@ -7,12 +7,14 @@
 
 #include "cellular_transport.h"
 
+#include <ctime>
 #include <cstring>
 
 #include "cellular_transport_cpp.h"
 #include "config_store.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 static const char *TAG = "cellular_transport";
@@ -81,4 +83,63 @@ bool cellular_transport_is_registered(void)
 bool cellular_transport_is_pdp_active(void)
 {
     return s_pdp_active;
+}
+
+static SemaphoreHandle_t s_gnss_mutex;
+static gnss_fix_t s_last_fix;
+
+esp_err_t cellular_transport_acquire_gnss_fix(gnss_fix_t *out_fix, uint32_t timeout_ms)
+{
+    if (!out_fix) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_gnss_mutex) {
+        s_gnss_mutex = xSemaphoreCreateMutex();
+        if (!s_gnss_mutex) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    WalterModem &modem = cellular_transport_get_modem();
+
+    /* VERIFY: exact GNSS trigger/result API. Walter's GNSS is part of
+     * the Sequans modem chip; the walter-esp-idf examples reportedly
+     * include a "positioning" example this should be checked against.
+     * Guessed shape: a blocking "perform a GNSS fix" call returning a
+     * result struct/status, since a cold GNSS fix can take tens of
+     * seconds - hence the caller-supplied timeout_ms. */
+    WalterModemGNSSFix walter_fix;
+    if (!modem.gnssPerformFix(&walter_fix, timeout_ms)) {
+        ESP_LOGW(TAG, "GNSS fix failed or timed out");
+        return ESP_ERR_TIMEOUT;
+    }
+
+    gnss_fix_t fix = {
+        .latitude = walter_fix.latitude,   /* VERIFY: field name */
+        .longitude = walter_fix.longitude, /* VERIFY: field name */
+        .altitude_m = walter_fix.altitude, /* VERIFY: field name */
+        .timestamp_unix = (int64_t)time(NULL),
+        .valid = true,
+    };
+
+    xSemaphoreTake(s_gnss_mutex, portMAX_DELAY);
+    s_last_fix = fix;
+    xSemaphoreGive(s_gnss_mutex);
+
+    *out_fix = fix;
+    return ESP_OK;
+}
+
+void cellular_transport_get_last_fix(gnss_fix_t *out_fix)
+{
+    if (!out_fix) {
+        return;
+    }
+    if (!s_gnss_mutex) {
+        *out_fix = (gnss_fix_t){ 0 };
+        return;
+    }
+    xSemaphoreTake(s_gnss_mutex, portMAX_DELAY);
+    *out_fix = s_last_fix;
+    xSemaphoreGive(s_gnss_mutex);
 }
