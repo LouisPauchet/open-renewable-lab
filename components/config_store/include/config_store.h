@@ -45,6 +45,10 @@ esp_err_t config_store_set_mqtt_settings(const mqtt_settings_t *settings);
 void config_store_get_net_settings(net_settings_t *out);
 esp_err_t config_store_set_net_settings(const net_settings_t *settings);
 
+/* ---- Position (GNSS) reporting settings ---- */
+void config_store_get_position_settings(position_settings_t *out);
+esp_err_t config_store_set_position_settings(const position_settings_t *settings);
+
 /* ---- Portal password ---- */
 esp_err_t config_store_set_portal_password(const char *plaintext_password);
 bool config_store_verify_portal_password(const char *plaintext_password);

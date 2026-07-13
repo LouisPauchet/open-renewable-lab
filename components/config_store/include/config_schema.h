@@ -78,8 +78,26 @@ typedef struct {
     char client_id[32];
     char username[32];
     char password[64];
-    char topic_prefix[64]; /* published topics = "<topic_prefix>/<variable name>" */
+    char topic_prefix[64]; /* published topics = "<topic_prefix>/<device_id>/<variable name>" */
+
+    /* When true, publishes are buffered instead of sent immediately;
+     * the connection is opened, the buffer drained, and the connection
+     * closed again once every batch_interval_ms - trading latency for
+     * radio-on time (mainly useful with the cellular backend). When
+     * false (default), the existing always-connected/immediate-publish
+     * behavior is used. */
+    bool batch_enabled;
+    uint32_t batch_interval_ms;
 } mqtt_settings_t;
+
+typedef struct {
+    /* GNSS position reporting - only meaningful (and only ever
+     * attempted) when net.transport == TRANSPORT_CELLULAR, since
+     * Walter's GNSS is provided by the cellular modem chip itself.
+     * Dynamically toggleable without a reboot, unlike transport. */
+    bool enabled;
+    uint32_t interval_ms; /* how often to acquire + log/publish a fix */
+} position_settings_t;
 
 typedef struct {
     uint32_t schema_version;
@@ -89,6 +107,7 @@ typedef struct {
 
     net_settings_t net;
     mqtt_settings_t mqtt;
+    position_settings_t position;
 
     variable_config_t variables[MAX_VARIABLES];
     uint8_t variable_count;

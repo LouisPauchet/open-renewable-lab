@@ -98,6 +98,11 @@ static void config_set_defaults(device_config_t *c)
     c->mqtt.enabled = false;
     c->mqtt.port = 1883;
     copy_str(c->mqtt.topic_prefix, sizeof(c->mqtt.topic_prefix), "walter");
+    c->mqtt.batch_enabled = false;
+    c->mqtt.batch_interval_ms = 30 * 60 * 1000; /* 30 min */
+
+    c->position.enabled = false;
+    c->position.interval_ms = 10 * 60 * 1000; /* 10 min */
 
     c->variable_count = 0;
     c->generation = 0;
@@ -194,6 +199,12 @@ cJSON *config_store_to_json(const device_config_t *c)
     cJSON_AddStringToObject(mqtt, "username", c->mqtt.username);
     cJSON_AddStringToObject(mqtt, "password", c->mqtt.password);
     cJSON_AddStringToObject(mqtt, "topic_prefix", c->mqtt.topic_prefix);
+    cJSON_AddBoolToObject(mqtt, "batch_enabled", c->mqtt.batch_enabled);
+    cJSON_AddNumberToObject(mqtt, "batch_interval_ms", c->mqtt.batch_interval_ms);
+
+    cJSON *position = cJSON_AddObjectToObject(root, "position");
+    cJSON_AddBoolToObject(position, "enabled", c->position.enabled);
+    cJSON_AddNumberToObject(position, "interval_ms", c->position.interval_ms);
 
     cJSON *vars = cJSON_AddArrayToObject(root, "variables");
     for (uint8_t i = 0; i < c->variable_count; i++) {
@@ -232,6 +243,14 @@ bool config_store_from_json(const cJSON *root, device_config_t *c)
         json_get_str(mqtt, "username", c->mqtt.username, sizeof(c->mqtt.username), "");
         json_get_str(mqtt, "password", c->mqtt.password, sizeof(c->mqtt.password), "");
         json_get_str(mqtt, "topic_prefix", c->mqtt.topic_prefix, sizeof(c->mqtt.topic_prefix), "walter");
+        c->mqtt.batch_enabled = json_get_bool(mqtt, "batch_enabled", false);
+        c->mqtt.batch_interval_ms = (uint32_t)json_get_int(mqtt, "batch_interval_ms", (int)c->mqtt.batch_interval_ms);
+    }
+
+    const cJSON *position = cJSON_GetObjectItemCaseSensitive(root, "position");
+    if (position) {
+        c->position.enabled = json_get_bool(position, "enabled", false);
+        c->position.interval_ms = (uint32_t)json_get_int(position, "interval_ms", (int)c->position.interval_ms);
     }
 
     const cJSON *vars = cJSON_GetObjectItemCaseSensitive(root, "variables");
@@ -560,6 +579,26 @@ esp_err_t config_store_set_net_settings(const net_settings_t *settings)
     }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_config.net = *settings;
+    s_config.generation++;
+    esp_err_t err = save_locked();
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
+void config_store_get_position_settings(position_settings_t *out)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    *out = s_config.position;
+    xSemaphoreGive(s_mutex);
+}
+
+esp_err_t config_store_set_position_settings(const position_settings_t *settings)
+{
+    if (!settings) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_config.position = *settings;
     s_config.generation++;
     esp_err_t err = save_locked();
     xSemaphoreGive(s_mutex);
