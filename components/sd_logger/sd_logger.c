@@ -7,6 +7,7 @@
 #include <time.h>
 
 #include "board_pins.h"
+#include "device_id.h"
 #include "driver/sdmmc_host.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
@@ -18,8 +19,18 @@
 static const char *TAG = "sd_logger";
 #define DATA_DIR SD_LOGGER_MOUNT_POINT "/data"
 #define RESULT_QUEUE_LEN 32
+#define POSITION_QUEUE_LEN 4
+
+typedef struct {
+    int64_t timestamp_unix;
+    bool time_is_synced;
+    double latitude;
+    double longitude;
+    float altitude_m;
+} position_row_t;
 
 static QueueHandle_t s_queue;
+static QueueHandle_t s_position_queue;
 static sdmmc_card_t *s_card;
 static bool s_ready;
 static uint32_t s_drop_count;
@@ -36,20 +47,22 @@ static void write_csv_string_field(FILE *f, const char *s)
     fputc('"', f);
 }
 
-static void build_path_for_timestamp(int64_t timestamp_unix, char *out, size_t out_size)
+static void build_path_for_timestamp(const char *prefix, int64_t timestamp_unix, char *out, size_t out_size)
 {
     time_t t = (time_t)timestamp_unix;
     struct tm tm_utc;
     gmtime_r(&t, &tm_utc);
-    /* Unsynced results land in 19700101.csv (epoch ~0) - a well-defined,
-     * easy-to-spot bucket rather than special-cased handling. */
-    snprintf(out, out_size, DATA_DIR "/%04d%02d%02d.csv", tm_utc.tm_year + 1900, tm_utc.tm_mon + 1, tm_utc.tm_mday);
+    /* Unsynced results land in <prefix>_19700101.csv (epoch ~0) - a
+     * well-defined, easy-to-spot bucket rather than special-cased
+     * handling. */
+    snprintf(out, out_size, DATA_DIR "/%s_%04d%02d%02d.csv", prefix, tm_utc.tm_year + 1900, tm_utc.tm_mon + 1,
+             tm_utc.tm_mday);
 }
 
 static void write_result_row(const aggregate_result_t *r)
 {
-    char path[64];
-    build_path_for_timestamp(r->timestamp_unix, path, sizeof(path));
+    char path[80];
+    build_path_for_timestamp("sensors", r->timestamp_unix, path, sizeof(path));
 
     struct stat st;
     bool is_new_file = stat(path, &st) != 0;
@@ -62,6 +75,7 @@ static void write_result_row(const aggregate_result_t *r)
     }
 
     if (is_new_file) {
+        fprintf(f, "# device_id=%s\n", device_id_get());
         fprintf(f, "timestamp_unix,time_synced,variable_id,name,sample_count,aggregate_mask,raw,mean,min,max,stddev\n");
     }
 
@@ -73,15 +87,45 @@ static void write_result_row(const aggregate_result_t *r)
     fclose(f);
 }
 
+static void write_position_row(const position_row_t *p)
+{
+    char path[80];
+    build_path_for_timestamp("position", p->timestamp_unix, path, sizeof(path));
+
+    struct stat st;
+    bool is_new_file = stat(path, &st) != 0;
+
+    FILE *f = fopen(path, "a");
+    if (!f) {
+        ESP_LOGE(TAG, "failed to open %s for append", path);
+        s_drop_count++;
+        return;
+    }
+
+    if (is_new_file) {
+        fprintf(f, "# device_id=%s\n", device_id_get());
+        fprintf(f, "timestamp_unix,time_synced,latitude,longitude,altitude_m\n");
+    }
+
+    fprintf(f, "%lld,%d,%.6f,%.6f,%.2f\n", (long long)p->timestamp_unix, (int)p->time_is_synced, p->latitude,
+            p->longitude, p->altitude_m);
+
+    fclose(f);
+}
+
 static void sd_writer_task(void *pvParams)
 {
     (void)pvParams;
     esp_task_wdt_add(NULL);
     aggregate_result_t result;
+    position_row_t position;
     for (;;) {
         esp_task_wdt_reset();
         if (xQueueReceive(s_queue, &result, pdMS_TO_TICKS(5000)) == pdTRUE) {
             write_result_row(&result);
+        }
+        while (xQueueReceive(s_position_queue, &position, 0) == pdTRUE) {
+            write_position_row(&position);
         }
     }
 }
@@ -138,7 +182,8 @@ esp_err_t sd_logger_init(void)
     }
 
     s_queue = xQueueCreate(RESULT_QUEUE_LEN, sizeof(aggregate_result_t));
-    if (!s_queue) {
+    s_position_queue = xQueueCreate(POSITION_QUEUE_LEN, sizeof(position_row_t));
+    if (!s_queue || !s_position_queue) {
         esp_vfs_fat_sdcard_unmount(SD_LOGGER_MOUNT_POINT, s_card);
         return ESP_ERR_NO_MEM;
     }
@@ -164,6 +209,26 @@ bool sd_logger_is_ready(void)
 QueueHandle_t sd_logger_get_sink_queue(void)
 {
     return s_ready ? s_queue : NULL;
+}
+
+esp_err_t sd_logger_log_position(int64_t timestamp_unix, bool time_is_synced, double latitude, double longitude,
+                                  float altitude_m)
+{
+    if (!s_ready) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    position_row_t row = {
+        .timestamp_unix = timestamp_unix,
+        .time_is_synced = time_is_synced,
+        .latitude = latitude,
+        .longitude = longitude,
+        .altitude_m = altitude_m,
+    };
+    if (xQueueSend(s_position_queue, &row, 0) != pdTRUE) {
+        s_drop_count++;
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
 }
 
 esp_err_t sd_logger_get_space(uint64_t *out_total_bytes, uint64_t *out_free_bytes)
