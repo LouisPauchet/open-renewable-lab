@@ -5,8 +5,30 @@
 #include "esp_flash.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+#include "sampling_engine.h"
+#include "stub_sensor.h"
 
 static const char *TAG = "app_main";
+
+/* Temporary stand-in for sd_logger/mqtt_publish_task sinks (added in
+ * later build stages) - just logs every finalized aggregate so the
+ * sampling/aggregation pipeline is observable before real sinks exist. */
+static void debug_result_sink_task(void *pvParams)
+{
+    QueueHandle_t queue = (QueueHandle_t)pvParams;
+    aggregate_result_t result;
+    for (;;) {
+        if (xQueueReceive(queue, &result, portMAX_DELAY) == pdTRUE) {
+            ESP_LOGI(TAG,
+                     "[%s] n=%" PRIu32 " raw=%.2f mean=%.2f min=%.2f max=%.2f stddev=%.2f synced=%d",
+                     result.name, result.sample_count, result.raw, result.mean, result.min, result.max,
+                     result.stddev, (int)result.time_is_synced);
+        }
+    }
+}
 
 void app_main(void)
 {
@@ -29,7 +51,17 @@ void app_main(void)
     ESP_LOGI(TAG, "config loaded: %u variable(s), generation=%" PRIu32,
              (unsigned)cfg.variable_count, cfg.generation);
 
+    sampling_engine_register_bus_driver(BUS_TYPE_SDI12, stub_sensor_read);
+    sampling_engine_register_bus_driver(BUS_TYPE_I2C, stub_sensor_read);
+    ESP_ERROR_CHECK(sampling_engine_init());
+
+    QueueHandle_t debug_sink = xQueueCreate(16, sizeof(aggregate_result_t));
+    ESP_ERROR_CHECK(sampling_engine_add_result_sink(debug_sink));
+    xTaskCreate(debug_result_sink_task, "debug_sink", 4096, debug_sink, tskIDLE_PRIORITY + 1, NULL);
+
     /* Further component init/task spawn is added incrementally as each
-     * subsystem (sampling_engine, sd_logger, web_portal, net_manager,
-     * mqtt_client) lands - see the project plan for build order. */
+     * subsystem (sd_logger, web_portal, net_manager, mqtt_client) lands -
+     * see the project plan for build order. debug_result_sink_task above
+     * is replaced by sd_logger/mqtt_publish_task's own sinks once those
+     * exist. */
 }
