@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cJSON.h"
 #include "config_schema.h"
 #include "esp_err.h"
 
@@ -47,6 +48,13 @@ esp_err_t config_store_set_net_settings(const net_settings_t *settings);
 /* ---- Portal password ---- */
 esp_err_t config_store_set_portal_password(const char *plaintext_password);
 bool config_store_verify_portal_password(const char *plaintext_password);
+
+/* ---- JSON (de)serialization, shared with web_portal's REST API so the
+ * wire format and the NVS-persisted format never drift apart ---- */
+cJSON *config_store_variable_to_json(const variable_config_t *v);
+bool config_store_variable_from_json(const cJSON *o, variable_config_t *out);
+cJSON *config_store_to_json(const device_config_t *c);
+bool config_store_from_json(const cJSON *root, device_config_t *out);
 
 #ifdef __cplusplus
 }

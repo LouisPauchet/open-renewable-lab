@@ -118,7 +118,7 @@ static void config_set_defaults(device_config_t *c)
  * JSON (de)serialization
  * ------------------------------------------------------------------- */
 
-static cJSON *variable_to_json(const variable_config_t *v)
+cJSON *config_store_variable_to_json(const variable_config_t *v)
 {
     cJSON *o = cJSON_CreateObject();
     cJSON_AddNumberToObject(o, "id", v->id);
@@ -144,7 +144,7 @@ static cJSON *variable_to_json(const variable_config_t *v)
     return o;
 }
 
-static bool variable_from_json(const cJSON *o, variable_config_t *v)
+bool config_store_variable_from_json(const cJSON *o, variable_config_t *v)
 {
     memset(v, 0, sizeof(*v));
     v->id = (uint16_t)json_get_int(o, "id", 0);
@@ -171,7 +171,7 @@ static bool variable_from_json(const cJSON *o, variable_config_t *v)
     return true;
 }
 
-static cJSON *config_to_json(const device_config_t *c)
+cJSON *config_store_to_json(const device_config_t *c)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "schema_version", c->schema_version);
@@ -197,14 +197,14 @@ static cJSON *config_to_json(const device_config_t *c)
 
     cJSON *vars = cJSON_AddArrayToObject(root, "variables");
     for (uint8_t i = 0; i < c->variable_count; i++) {
-        cJSON_AddItemToArray(vars, variable_to_json(&c->variables[i]));
+        cJSON_AddItemToArray(vars, config_store_variable_to_json(&c->variables[i]));
     }
 
     cJSON_AddNumberToObject(root, "generation", c->generation);
     return root;
 }
 
-static bool config_from_json(const cJSON *root, device_config_t *c)
+bool config_store_from_json(const cJSON *root, device_config_t *c)
 {
     config_set_defaults(c);
 
@@ -245,7 +245,7 @@ static bool config_from_json(const cJSON *root, device_config_t *c)
                 break;
             }
             variable_config_t v;
-            if (variable_from_json(item, &v)) {
+            if (config_store_variable_from_json(item, &v)) {
                 c->variables[c->variable_count++] = v;
             }
         }
@@ -310,7 +310,7 @@ static esp_err_t nvs_save_blob(const char *str)
 /* Caller must hold s_mutex. */
 static esp_err_t save_locked(void)
 {
-    cJSON *root = config_to_json(&s_config);
+    cJSON *root = config_store_to_json(&s_config);
     if (!root) {
         return ESP_ERR_NO_MEM;
     }
@@ -352,7 +352,7 @@ esp_err_t config_store_init(void)
     if (nvs_load_blob(&blob) == ESP_OK) {
         cJSON *root = cJSON_Parse(blob);
         if (root) {
-            loaded_ok = config_from_json(root, &s_config);
+            loaded_ok = config_store_from_json(root, &s_config);
             cJSON_Delete(root);
         } else {
             ESP_LOGW(TAG, "stored config blob failed to parse as JSON");
