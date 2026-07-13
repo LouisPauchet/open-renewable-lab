@@ -1,5 +1,6 @@
 #include <time.h>
 
+#include "cellular_transport.h"
 #include "config_store.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -41,8 +42,12 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(o, "ap_client_count", net_manager_ap_client_count());
 
     cJSON_AddStringToObject(o, "transport", transport_name(cfg.net.transport));
-    /* Cellular link state is wired up once cellular_transport lands. */
-    bool data_up = (cfg.net.transport == TRANSPORT_WIFI) ? net_manager_sta_is_connected() : false;
+    bool data_up = false;
+    if (cfg.net.transport == TRANSPORT_WIFI) {
+        data_up = net_manager_sta_is_connected();
+    } else if (cfg.net.transport == TRANSPORT_CELLULAR) {
+        data_up = cellular_transport_is_registered() && cellular_transport_is_pdp_active();
+    }
     cJSON_AddBoolToObject(o, "data_connection_up", data_up);
 
     cJSON_AddBoolToObject(o, "time_synced", time_synced);

@@ -1,5 +1,6 @@
 #include <inttypes.h>
 
+#include "cellular_transport.h"
 #include "config_store.h"
 #include "esp_chip_info.h"
 #include "esp_flash.h"
@@ -86,9 +87,12 @@ void app_main(void)
     ESP_ERROR_CHECK(net_manager_init());
     ESP_ERROR_CHECK(web_portal_init());
     ESP_ERROR_CHECK(time_sync_init());
-    ESP_ERROR_CHECK(mqttc_init());
 
-    /* Further component init/task spawn is added incrementally as each
-     * subsystem (cellular_transport) lands - see the project plan for
-     * build order. */
+    if (cfg.net.transport == TRANSPORT_CELLULAR) {
+        if (cellular_transport_init() != ESP_OK) {
+            ESP_LOGE(TAG, "cellular_transport_init failed - see its header for the unverified-SDK-calls caveat");
+        }
+    }
+
+    ESP_ERROR_CHECK(mqttc_init());
 }

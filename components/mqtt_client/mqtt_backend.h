@@ -23,6 +23,7 @@ typedef struct {
 } mqttc_backend_vtable_t;
 
 const mqttc_backend_vtable_t *backend_esp_mqtt_get_vtable(void);
+const mqttc_backend_vtable_t *backend_walter_mqtt_get_vtable(void);
 
 #ifdef __cplusplus
 }

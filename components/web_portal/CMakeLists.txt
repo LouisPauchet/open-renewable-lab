@@ -4,5 +4,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     EMBED_FILES "assets/index.html"
     REQUIRES esp_http_server config_store sampling_engine sd_logger net_manager time_sync mqtt_client sdi12_bus
-              i2c_bus json esp_timer lwip esp_hw_support
+              i2c_bus cellular_transport json esp_timer lwip esp_hw_support
 )

@@ -138,8 +138,11 @@ esp_err_t mqttc_init(void)
     if (net.transport == TRANSPORT_WIFI) {
         s_backend = backend_esp_mqtt_get_vtable();
     } else if (net.transport == TRANSPORT_CELLULAR) {
-        ESP_LOGW(TAG, "cellular MQTT backend not implemented yet - MQTT stays inactive until cellular_transport lands");
-        s_backend = NULL;
+        /* backend_walter_mqtt.cpp is unverified against the real
+         * walter-modem SDK (see cellular_transport.h) - selected here
+         * so the architecture is wired end-to-end, but treat cellular
+         * MQTT as untested until that's confirmed. */
+        s_backend = backend_walter_mqtt_get_vtable();
     } else {
         s_backend = NULL; /* no transport configured yet */
     }
