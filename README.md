@@ -7,11 +7,20 @@ position logging (cellular only), scheduled batch MQTT transmission for
 power saving, and a captive-portal web UI for setup - no code changes needed
 per deployment.
 
-Every device has a stable ID derived from its factory MAC address
-(`device_id_get()`), shown in the portal's status panel, written into every
-CSV file's header line, and included in every MQTT topic
-(`<topic_prefix>/<device_id>/<variable name>`) so multiple nodes can share
-one broker/topic_prefix.
+Every device has a stable ID derived from its factory MAC address, shown in
+the portal's status panel, written into every CSV file's header line, and
+included in every MQTT topic (`<topic_prefix>/<device_id>/<variable name>`)
+so multiple nodes can share one broker/topic_prefix.
+
+## Documentation
+
+- **[docs/USER_MANUAL.md](docs/USER_MANUAL.md)** - deploying and operating a
+  device via the web portal. No code or ESP-IDF knowledge needed; start here
+  if you're a student setting up a sensor station.
+- **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)** - firmware
+  architecture, component reference, REST API, concurrency model, and how to
+  extend the code (e.g. add a new sensor driver). Start here if you're
+  reading or modifying the source.
 
 ## Prerequisites
 
@@ -35,61 +44,23 @@ idf.py -p <PORT> flash monitor
 ## Before first flash: check `board_pins.h`
 
 `components/board_pins/include/board_pins.h` holds every Walter Feels GPIO
-assignment. SDI-12 (TXD/RXD/TX_EN/RX_EN + 12V_EN), I2C (SDA/SCL/BUSPOW), and
-SD card (SDMMC CMD/CLK/D0) pin *numbers* come straight from the schematic and
-are confirmed. Still open:
+assignment. SDI-12, I2C, and SD card pin *numbers* come straight from the
+schematic and are confirmed; enable-pin polarities and a few optional pins
+(card-detect, status LED, force-AP button) are not - see
+[DEVELOPER_GUIDE.md §8](docs/DEVELOPER_GUIDE.md#8-board-pin-mapping-board_pins)
+for the full pin table and what's still open. Each subsystem safely no-ops
+(logs a warning, falls back to a synthetic stub sensor where relevant) if
+its required pins are left unset, so the firmware boots and the portal
+works even before any of this is resolved.
 
-1. **Enable-pin polarities** (SDI-12 TX_EN/RX_EN, 12V_EN, I2C_BUSPOW) are
-   marked "TODO verify active level" in `board_pins.h`/`sdi12_bus.c` -
-   inferred from the SN74LV1T126 buffer's datasheet (active-HIGH), not
-   independently confirmed. If a sensor doesn't respond, check with a meter
-   before assuming the driver is wrong.
-2. **SD card-detect, status LED, and force-AP button** pins are still
-   unset placeholders (not shown on the schematic pages available while
-   writing this) - SD logging works fine without card-detect, the other two
-   are optional UX niceties.
-
-Each subsystem safely no-ops (logs a warning, falls back to a synthetic stub
-sensor where relevant) if its required pins are left unset, so the firmware
-boots and the portal works even before any of the above is resolved.
-
-## Known low-confidence areas (verify before relying on them)
-
-Written without access to real hardware, a full ESP-IDF Python environment,
-or the `walter-modem`/`esp-mqtt` library sources - most of the firmware was
-checked against the actual ESP-IDF v6.0.2 headers on disk, but these
-specific pieces could not be and should be reviewed first:
-
-- **`components/sdi12_bus/`** - pin assignments are confirmed from the
-  schematic, but the bit-banged physical layer itself (timing, enable-pin
-  polarity) is still unverified against real hardware. Check with a logic
-  analyzer against one known-good sensor.
-- **`components/cellular_transport/` (including its GNSS fix acquisition)
-  and `components/mqtt_client/backend_walter_mqtt.cpp`** - every
-  `WalterModem` method call is a best-effort guess from a research summary,
-  not the real header (marked `VERIFY` inline throughout both files). Only
-  relevant if you set network transport to "Cellular" in the portal.
-- **`components/mqtt_client/backend_esp_mqtt.c`** - written against the
-  documented stable esp-mqtt API, but unverified locally since the
-  submodule source was missing (see Prerequisites above).
+For a full list of known low-confidence areas (cellular/GNSS integration,
+the SDI-12 physical layer, etc.) that should be reviewed before a real
+deployment, see
+[DEVELOPER_GUIDE.md §18](docs/DEVELOPER_GUIDE.md#18-known-limitations-and-low-confidence-areas).
 
 ## First boot
 
-1. Flash and power on. A SoftAP named `WalterSensor-XXXX` appears (open
-   network) for 5 minutes, and stays up as long as a client is connected.
-2. Connect to it; a captive-portal login page should open automatically
-   (or browse to `http://192.168.4.1/`).
-3. Log in with the default password `walter1234` and **change it
-   immediately** under Portal password.
-4. Add variables (SDI-12/I2C sensors), configure MQTT and/or network
-   transport, then Save & Reboot if you changed the transport.
-
-## Layout
-
-See `main/app_main.c` for init order and `components/*/` for one component
-per hardware resource or concern (config storage, sensor buses, sampling/
-aggregation, SD logging, networking, MQTT, web portal). Each component's
-header comment explains its role; most are independently testable per the
-incremental build order the project was developed in (scaffolding -> config
-store -> sampling engine with a stub sensor -> SD logging -> web portal ->
-WiFi -> MQTT -> real SDI-12/I2C drivers -> cellular).
+See [USER_MANUAL.md](docs/USER_MANUAL.md) for the full walkthrough. Short
+version: connect to the `WalterSensor-XXXX` WiFi hotspot, browse to
+`http://192.168.4.1/` if the login page doesn't pop up automatically, log
+in with the default password `walter1234`, and **change it immediately**.
