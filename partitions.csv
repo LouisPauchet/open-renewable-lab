@@ -1,0 +1,7 @@
+# Name,     Type, SubType,  Offset,   Size,   Flags
+# No OTA in v1: a single factory app slot. The embedded web-portal SPA
+# assets are linked into this binary (see components/web_portal), so the
+# factory slot is sized generously.
+nvs,        data, nvs,      0x9000,   0x6000,
+phy_init,   data, phy,      0xf000,   0x1000,
+factory,    app,  factory,  0x10000,  3M,

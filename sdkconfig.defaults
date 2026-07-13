@@ -1,0 +1,30 @@
+# Walter module is ESP32-S3 based.
+CONFIG_IDF_TARGET="esp32s3"
+
+# TODO: confirm exact flash/PSRAM size for your Walter module revision
+# (datasheet/schematic) and adjust below if these defaults are wrong.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# No OTA in v1 - single factory app, larger NVS for the config blob + SPA assets in flash.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# UART0 is dedicated to the cellular modem AT interface on the Walter module;
+# route the IDF console/log output to USB-Serial-JTAG instead so modem
+# communication is never contended with boot logs.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# FreeRTOS / watchdog tuning - generous timeouts since SDI-12 measurement
+# commands can legitimately take several seconds.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
+
+# Networking
+CONFIG_LWIP_SNTP_MAX_SERVERS=1
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# cJSON is used by config_store for the NVS-backed config blob.
+CONFIG_JSON_USING_DOUBLE_PRECISION=y
