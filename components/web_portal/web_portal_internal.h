@@ -52,6 +52,7 @@ void auth_register_routes(httpd_handle_t server);
 void api_variables_register_routes(httpd_handle_t server);
 void api_settings_register_routes(httpd_handle_t server);
 void api_status_register_routes(httpd_handle_t server);
+void api_bus_register_routes(httpd_handle_t server);
 
 #ifdef __cplusplus
 }

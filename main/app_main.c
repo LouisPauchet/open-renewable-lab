@@ -12,6 +12,7 @@
 #include "net_manager.h"
 #include "sampling_engine.h"
 #include "sd_logger.h"
+#include "sdi12_bus.h"
 #include "stub_sensor.h"
 #include "time_sync.h"
 #include "web_portal.h"
@@ -56,7 +57,13 @@ void app_main(void)
     ESP_LOGI(TAG, "config loaded: %u variable(s), generation=%" PRIu32,
              (unsigned)cfg.variable_count, cfg.generation);
 
-    sampling_engine_register_bus_driver(BUS_TYPE_SDI12, stub_sensor_read);
+    if (sdi12_bus_init() == ESP_OK) {
+        sampling_engine_register_bus_driver(BUS_TYPE_SDI12, sdi12_variable_read);
+    } else {
+        ESP_LOGW(TAG, "SDI-12 bus unavailable (board_pins.h SDI-12 pins not configured), using stub sensor");
+        sampling_engine_register_bus_driver(BUS_TYPE_SDI12, stub_sensor_read);
+    }
+    /* I2C bus/sensor drivers land in a later build stage; stub for now. */
     sampling_engine_register_bus_driver(BUS_TYPE_I2C, stub_sensor_read);
     ESP_ERROR_CHECK(sampling_engine_init());
 
@@ -76,6 +83,6 @@ void app_main(void)
     ESP_ERROR_CHECK(mqttc_init());
 
     /* Further component init/task spawn is added incrementally as each
-     * subsystem (sdi12_bus, i2c_bus, cellular_transport) lands - see
-     * the project plan for build order. */
+     * subsystem (i2c_bus, cellular_transport) lands - see the project
+     * plan for build order. */
 }

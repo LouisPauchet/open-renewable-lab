@@ -42,6 +42,7 @@ esp_err_t web_portal_init(void)
     api_variables_register_routes(server);
     api_settings_register_routes(server);
     api_status_register_routes(server);
+    api_bus_register_routes(server);
 
     httpd_uri_t catch_all = { .uri = "/*", .method = HTTP_GET, .handler = spa_catch_all_handler };
     httpd_register_uri_handler(server, &catch_all);

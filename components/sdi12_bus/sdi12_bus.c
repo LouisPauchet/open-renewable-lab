@@ -1,0 +1,295 @@
+#include "sdi12_bus.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "board_pins.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include "esp_rom_sys.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "sdi12_internal.h"
+
+static const char *TAG = "sdi12_bus";
+
+/* 1/1200s = 833.33us; SDI-12 tolerates a few % timing error. */
+#define SDI12_BIT_PERIOD_US 833
+/* Spec minimum break is 12ms, marking gap 8.33ms - both padded for margin. */
+#define SDI12_BREAK_US 15000
+#define SDI12_MARKING_US 9000
+#define SDI12_INTERCHAR_GUARD_US 200
+
+static bool s_initialized;
+static SemaphoreHandle_t s_bus_mutex;
+static SemaphoreHandle_t s_edge_sem;
+
+static void IRAM_ATTR sdi12_gpio_isr(void *arg)
+{
+    (void)arg;
+    BaseType_t higher_prio_woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_edge_sem, &higher_prio_woken);
+    if (higher_prio_woken) {
+        portYIELD_FROM_ISR();
+    }
+}
+
+/* ---- bit-level TX/RX (SDI-12 polarity: mark/idle=LOW=1, space=HIGH=0) ---- */
+
+static inline void tx_bit(int bit_value)
+{
+    gpio_set_level(BOARD_PIN_SDI12_DATA, bit_value ? 0 : 1); /* SDI-12 polarity: value 1 -> LOW */
+    esp_rom_delay_us(SDI12_BIT_PERIOD_US);
+}
+
+static void tx_char(char c)
+{
+    uint8_t data = (uint8_t)c & 0x7F;
+    int ones = 0;
+    for (int i = 0; i < 7; i++) {
+        if (data & (1 << i)) {
+            ones++;
+        }
+    }
+    int parity = (ones % 2 == 0) ? 0 : 1; /* even parity */
+
+    tx_bit(0); /* start bit (space) */
+    for (int i = 0; i < 7; i++) {
+        tx_bit((data >> i) & 1); /* LSB first */
+    }
+    tx_bit(parity);
+    tx_bit(1); /* stop bit (mark) */
+}
+
+static void send_break_and_marking(void)
+{
+    gpio_set_level(BOARD_PIN_SDI12_DATA, 1); /* SDI-12 polarity: break = space = HIGH */
+    esp_rom_delay_us(SDI12_BREAK_US);
+    gpio_set_level(BOARD_PIN_SDI12_DATA, 0); /* marking = LOW */
+    esp_rom_delay_us(SDI12_MARKING_US);
+}
+
+/* Waits for one character's start-bit edge, then busy-samples its 7
+ * data bits + parity at the bit centers. Returns ESP_ERR_TIMEOUT if no
+ * edge arrives within timeout_ms. */
+static esp_err_t rx_char(uint32_t timeout_ms, char *out_char)
+{
+    xSemaphoreTake(s_edge_sem, 0); /* drain any stale signal */
+    gpio_set_intr_type(BOARD_PIN_SDI12_DATA, GPIO_INTR_POSEDGE);
+    gpio_intr_enable(BOARD_PIN_SDI12_DATA);
+
+    BaseType_t got = xSemaphoreTake(s_edge_sem, pdMS_TO_TICKS(timeout_ms));
+    gpio_intr_disable(BOARD_PIN_SDI12_DATA);
+    if (got != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    /* Edge = start of the start bit. Sample each subsequent bit at its
+     * center: 1.5 bit periods from the edge lands mid first-data-bit. */
+    esp_rom_delay_us(SDI12_BIT_PERIOD_US + SDI12_BIT_PERIOD_US / 2);
+
+    uint8_t data = 0;
+    for (int i = 0; i < 7; i++) {
+        int level = gpio_get_level(BOARD_PIN_SDI12_DATA);
+        if (!level) {
+            data |= (1 << i); /* SDI-12 polarity: LOW -> bit value 1 */
+        }
+        esp_rom_delay_us(SDI12_BIT_PERIOD_US);
+    }
+    /* Parity bit center reached now; not strictly enforced (log-only
+     * would require the caller context) - malformed characters simply
+     * surface as a parse failure upstream. */
+    esp_rom_delay_us(SDI12_BIT_PERIOD_US + SDI12_INTERCHAR_GUARD_US);
+
+    *out_char = (char)(data & 0x7F);
+    return ESP_OK;
+}
+
+static esp_err_t rx_response(char *buf, size_t buf_size, uint32_t first_char_timeout_ms,
+                              uint32_t interchar_timeout_ms)
+{
+    size_t len = 0;
+    bool first = true;
+
+    for (;;) {
+        char c;
+        esp_err_t err = rx_char(first ? first_char_timeout_ms : interchar_timeout_ms, &c);
+        if (err != ESP_OK) {
+            if (!first) {
+                break; /* sensor stopped sending - treat as end of response */
+            }
+            return err; /* no response at all */
+        }
+        first = false;
+
+        if (len < buf_size - 1) {
+            buf[len++] = c;
+        }
+        if (len >= 2 && buf[len - 2] == '\r' && buf[len - 1] == '\n') {
+            break;
+        }
+        if (len >= buf_size - 1) {
+            break;
+        }
+    }
+
+    buf[len] = '\0';
+    return ESP_OK;
+}
+
+/* ---- public API ---- */
+
+esp_err_t sdi12_bus_init(void)
+{
+    if (!board_pin_is_set(BOARD_PIN_SDI12_DATA)) {
+        ESP_LOGE(TAG, "SDI-12 data pin not configured in board_pins.h, SDI-12 bus disabled");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 1ULL << BOARD_PIN_SDI12_DATA,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE, /* defined idle=LOW if nothing drives the line */
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    esp_err_t err = gpio_config(&io_conf);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (board_pin_is_set(BOARD_PIN_SDI12_DIR_ENABLE)) {
+        gpio_config_t dir_conf = {
+            .pin_bit_mask = 1ULL << BOARD_PIN_SDI12_DIR_ENABLE,
+            .mode = GPIO_MODE_OUTPUT,
+        };
+        err = gpio_config(&dir_conf);
+        if (err != ESP_OK) {
+            return err;
+        }
+        gpio_set_level(BOARD_PIN_SDI12_DIR_ENABLE, 0); /* default: receive-enabled; TODO verify active level */
+    }
+
+    if (board_pin_is_set(BOARD_PIN_SDI12_BUS_POWER)) {
+        gpio_config_t pwr_conf = {
+            .pin_bit_mask = 1ULL << BOARD_PIN_SDI12_BUS_POWER,
+            .mode = GPIO_MODE_OUTPUT,
+        };
+        err = gpio_config(&pwr_conf);
+        if (err != ESP_OK) {
+            return err;
+        }
+        gpio_set_level(BOARD_PIN_SDI12_BUS_POWER, 1); /* power sensors on; TODO verify active level */
+    }
+
+    s_bus_mutex = xSemaphoreCreateMutex();
+    s_edge_sem = xSemaphoreCreateBinary();
+    if (!s_bus_mutex || !s_edge_sem) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    err = gpio_install_isr_service(0);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) { /* INVALID_STATE = already installed elsewhere */
+        return err;
+    }
+    err = gpio_isr_handler_add(BOARD_PIN_SDI12_DATA, sdi12_gpio_isr, NULL);
+    if (err != ESP_OK) {
+        return err;
+    }
+    gpio_intr_disable(BOARD_PIN_SDI12_DATA);
+
+    s_initialized = true;
+    ESP_LOGI(TAG, "SDI-12 bus initialized on GPIO%d", BOARD_PIN_SDI12_DATA);
+    return ESP_OK;
+}
+
+esp_err_t sdi12_send_command(char addr, const char *cmd_body, char *resp_buf, size_t resp_buf_len,
+                              uint32_t response_timeout_ms)
+{
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!resp_buf || resp_buf_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    xSemaphoreTake(s_bus_mutex, portMAX_DELAY);
+
+    char cmd[16];
+    int n = snprintf(cmd, sizeof(cmd), "%c%s!", addr, cmd_body ? cmd_body : "");
+    if (n < 0 || n >= (int)sizeof(cmd)) {
+        xSemaphoreGive(s_bus_mutex);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    gpio_set_direction(BOARD_PIN_SDI12_DATA, GPIO_MODE_OUTPUT);
+    if (board_pin_is_set(BOARD_PIN_SDI12_DIR_ENABLE)) {
+        gpio_set_level(BOARD_PIN_SDI12_DIR_ENABLE, 1); /* TODO verify active level */
+    }
+
+    send_break_and_marking();
+    for (const char *p = cmd; *p; p++) {
+        tx_char(*p);
+    }
+
+    if (board_pin_is_set(BOARD_PIN_SDI12_DIR_ENABLE)) {
+        gpio_set_level(BOARD_PIN_SDI12_DIR_ENABLE, 0);
+    }
+    gpio_set_direction(BOARD_PIN_SDI12_DATA, GPIO_MODE_INPUT);
+
+    esp_err_t err = rx_response(resp_buf, resp_buf_len, response_timeout_ms, 100);
+
+    xSemaphoreGive(s_bus_mutex);
+    return err;
+}
+
+esp_err_t sdi12_scan_addresses(char *found, size_t max_found, size_t *out_count)
+{
+    if (!found || !out_count) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    static const char ADDR_SET[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+    size_t n = 0;
+    for (const char *p = ADDR_SET; *p; p++) {
+        char resp[16];
+        if (sdi12_send_command(*p, "", resp, sizeof(resp), 100) == ESP_OK && n < max_found) {
+            found[n++] = *p;
+        }
+    }
+    *out_count = n;
+    return ESP_OK;
+}
+
+esp_err_t sdi12_change_address(char old_addr, char new_addr)
+{
+    char body[4];
+    snprintf(body, sizeof(body), "A%c", new_addr);
+    char resp[16];
+    return sdi12_send_command(old_addr, body, resp, sizeof(resp), 200);
+}
+
+esp_err_t sdi12_measure(char addr, uint8_t *num_values, uint32_t *wait_s)
+{
+    char resp[16];
+    esp_err_t err = sdi12_send_command(addr, "M", resp, sizeof(resp), 200);
+    if (err != ESP_OK) {
+        return err;
+    }
+    /* response = "atttn\r\n" */
+    if (strlen(resp) < 5 || resp[0] != addr) {
+        return ESP_FAIL;
+    }
+    char ttt[4] = { resp[1], resp[2], resp[3], '\0' };
+    *wait_s = (uint32_t)atoi(ttt);
+    *num_values = (uint8_t)(resp[4] - '0');
+    return ESP_OK;
+}
+
+esp_err_t sdi12_read_data(char addr, uint8_t data_index, char *resp_buf, size_t resp_buf_len)
+{
+    char body[4];
+    snprintf(body, sizeof(body), "D%u", (unsigned)(data_index % 10));
+    return sdi12_send_command(addr, body, resp_buf, resp_buf_len, 200);
+}
