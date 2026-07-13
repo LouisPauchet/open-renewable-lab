@@ -18,9 +18,15 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # communication is never contended with boot logs.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
-# FreeRTOS / watchdog tuning - generous timeouts since SDI-12 measurement
-# commands can legitimately take several seconds.
+# FreeRTOS / watchdog tuning - generous timeout since SDI-12 measurement
+# commands can legitimately take several seconds; panic+reboot (rather
+# than just log) on a genuine hang, appropriate for an unattended field
+# deployment. Only the steady-timing tasks (aggregation, SD writer,
+# MQTT publish) are registered with the watchdog - the SDI-12/I2C bus
+# scheduler tasks have inherently variable, sensor-dependent blocking
+# time and are deliberately left unregistered to avoid false trips.
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
+CONFIG_ESP_TASK_WDT_PANIC=y
 
 # Networking
 CONFIG_LWIP_SNTP_MAX_SERVERS=1

@@ -40,6 +40,13 @@ esp_err_t sdi12_measure_and_read(char addr, uint8_t parameter_index, double *out
         return err;
     }
 
+    /* Spec allows up to 3 digits (999s); cap defensively so a
+     * misbehaving/misparsed response can't block the calling task for
+     * unreasonably long or spuriously trip its task watchdog. */
+    if (wait_s > SDI12_MAX_MEASURE_WAIT_S) {
+        wait_s = SDI12_MAX_MEASURE_WAIT_S;
+    }
+
     if (wait_s > 0) {
         /* Simplification: sensors may also send an unsolicited service
          * request as soon as data is ready, before wait_s elapses - not

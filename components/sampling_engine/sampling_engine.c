@@ -6,6 +6,7 @@
 #include "aggregator.h"
 #include "config_store.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
 #include "time_sync.h"
@@ -56,6 +57,14 @@ static void get_wall_clock(int64_t *out_unix_s, bool *out_synced)
 
 /* ---------------------------------------------------------------------
  * bus scheduler task - one instance per bus_type_t
+ *
+ * Deliberately NOT registered with esp_task_wdt: a single sensor read
+ * (especially SDI-12's aM!-then-wait-then-aD0! sequence) can
+ * legitimately block for many seconds depending on what the sensor
+ * itself advertises, which doesn't fit a fixed watchdog timeout
+ * without risking false trips. aggregation_task/sd_writer_task/
+ * mqtt_publish_task have much more predictable per-iteration timing
+ * and are registered instead.
  * ------------------------------------------------------------------- */
 
 static void bus_scheduler_task(void *pvParams)
@@ -217,8 +226,10 @@ static void publish_result(const agg_entry_t *entry)
 static void aggregation_task(void *pvParams)
 {
     (void)pvParams;
+    esp_task_wdt_add(NULL);
 
     for (;;) {
+        esp_task_wdt_reset();
         sample_msg_t msg;
         if (xQueueReceive(s_sample_queue, &msg, pdMS_TO_TICKS(SCHEDULER_TICK_MS)) == pdTRUE) {
             uint32_t generation = config_store_get_generation();

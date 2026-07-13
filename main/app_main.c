@@ -22,9 +22,9 @@
 
 static const char *TAG = "app_main";
 
-/* Temporary stand-in for sd_logger/mqtt_publish_task sinks (added in
- * later build stages) - just logs every finalized aggregate so the
- * sampling/aggregation pipeline is observable before real sinks exist. */
+/* Lightweight console visibility: logs every finalized aggregate
+ * alongside the SD/MQTT sinks - handy during bring-up and for a
+ * student watching the serial monitor. */
 static void debug_result_sink_task(void *pvParams)
 {
     QueueHandle_t queue = (QueueHandle_t)pvParams;

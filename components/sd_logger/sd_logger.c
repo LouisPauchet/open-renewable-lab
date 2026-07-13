@@ -10,6 +10,7 @@
 #include "driver/sdspi_host.h"
 #include "driver/spi_master.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "esp_vfs_fat.h"
 #include "freertos/task.h"
 #include "sampling_engine.h"
@@ -76,9 +77,11 @@ static void write_result_row(const aggregate_result_t *r)
 static void sd_writer_task(void *pvParams)
 {
     (void)pvParams;
+    esp_task_wdt_add(NULL);
     aggregate_result_t result;
     for (;;) {
-        if (xQueueReceive(s_queue, &result, portMAX_DELAY) == pdTRUE) {
+        esp_task_wdt_reset();
+        if (xQueueReceive(s_queue, &result, pdMS_TO_TICKS(5000)) == pdTRUE) {
             write_result_row(&result);
         }
     }

@@ -5,6 +5,7 @@
 #include "cJSON.h"
 #include "config_store.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -95,8 +96,10 @@ static void mqtt_publish_task(void *pvParams)
 {
     QueueHandle_t queue = (QueueHandle_t)pvParams;
     uint32_t last_generation = UINT32_MAX;
+    esp_task_wdt_add(NULL);
 
     for (;;) {
+        esp_task_wdt_reset();
         aggregate_result_t result;
         bool got_sample = xQueueReceive(queue, &result, pdMS_TO_TICKS(500)) == pdTRUE;
 
