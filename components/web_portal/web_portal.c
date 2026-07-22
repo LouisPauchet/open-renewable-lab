@@ -9,7 +9,7 @@ static const char *TAG = "web_portal";
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_end");
 
-/* Catch-all for every GET request not matched by a more specific /api/*
+/* Catch-all for every GET request not matched by a more specific /api/
  * route above it in registration order - including the OS captive-
  * portal probe paths (/generate_204, /hotspot-detect.html, ncsi.txt,
  * ...). Serving the SPA (rather than each probe's expected "no portal

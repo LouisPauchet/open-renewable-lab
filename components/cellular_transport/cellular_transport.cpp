@@ -3,14 +3,18 @@
  * summary, not verified against the actual library header (which
  * isn't fetched into this checkout). Treat this file as a skeleton to
  * correct once managed_components/dptechnics__walter-modem is
- * present, not as tested code. */
+ * present, not as tested code.
+ *
+ * Only meaningful on esp32s3 (the Walter module's chip); on any other
+ * target (e.g. the ESP32 DevKit V1 test rig - see board_pins.h) every
+ * function here is a no-op stub, since dptechnics/walter-modem isn't
+ * even fetched for other targets (main/idf_component.yml). */
 
 #include "cellular_transport.h"
 
-#include <ctime>
 #include <cstring>
+#include <ctime>
 
-#include "cellular_transport_cpp.h"
 #include "config_store.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -19,14 +23,14 @@
 
 static const char *TAG = "cellular_transport";
 
-WalterModem &cellular_transport_get_modem()
-{
-    static WalterModem modem; /* VERIFY: default-constructible, per walter-esp-idf examples */
-    return modem;
-}
-
 static volatile bool s_registered = false;
 static volatile bool s_pdp_active = false;
+static SemaphoreHandle_t s_gnss_mutex;
+static gnss_fix_t s_last_fix;
+
+#if CONFIG_IDF_TARGET_ESP32S3
+
+#include "cellular_transport_cpp.h"
 
 static void cellular_task(void *pvParams)
 {
@@ -75,19 +79,6 @@ esp_err_t cellular_transport_init(void)
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
-bool cellular_transport_is_registered(void)
-{
-    return s_registered;
-}
-
-bool cellular_transport_is_pdp_active(void)
-{
-    return s_pdp_active;
-}
-
-static SemaphoreHandle_t s_gnss_mutex;
-static gnss_fix_t s_last_fix;
-
 esp_err_t cellular_transport_acquire_gnss_fix(gnss_fix_t *out_fix, uint32_t timeout_ms)
 {
     if (!out_fix) {
@@ -130,13 +121,41 @@ esp_err_t cellular_transport_acquire_gnss_fix(gnss_fix_t *out_fix, uint32_t time
     return ESP_OK;
 }
 
+#else /* !CONFIG_IDF_TARGET_ESP32S3 */
+
+esp_err_t cellular_transport_init(void)
+{
+    ESP_LOGE(TAG, "cellular_transport is only supported on esp32s3 (the Walter module) - "
+                  "this build target has no walter-modem dependency available");
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t cellular_transport_acquire_gnss_fix(gnss_fix_t *out_fix, uint32_t timeout_ms)
+{
+    (void)out_fix;
+    (void)timeout_ms;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+#endif /* CONFIG_IDF_TARGET_ESP32S3 */
+
+bool cellular_transport_is_registered(void)
+{
+    return s_registered;
+}
+
+bool cellular_transport_is_pdp_active(void)
+{
+    return s_pdp_active;
+}
+
 void cellular_transport_get_last_fix(gnss_fix_t *out_fix)
 {
     if (!out_fix) {
         return;
     }
     if (!s_gnss_mutex) {
-        *out_fix = (gnss_fix_t){ 0 };
+        *out_fix = gnss_fix_t{};
         return;
     }
     xSemaphoreTake(s_gnss_mutex, portMAX_DELAY);

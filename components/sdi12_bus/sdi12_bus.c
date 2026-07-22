@@ -177,7 +177,7 @@ esp_err_t sdi12_bus_init(void)
     }
 
     gpio_config_t rx_conf = {
-        .pin_bit_mask = 1ULL << BOARD_PIN_SDI12_RXD,
+        .pin_bit_mask = board_pin_bit_mask(BOARD_PIN_SDI12_RXD),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_ENABLE, /* defined idle=LOW if nothing drives the line */

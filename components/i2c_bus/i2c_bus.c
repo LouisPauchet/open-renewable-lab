@@ -33,7 +33,7 @@ esp_err_t i2c_bus_init(void)
 
     if (board_pin_is_set(BOARD_PIN_I2C_BUS_POWER)) {
         gpio_config_t pwr_conf = {
-            .pin_bit_mask = 1ULL << BOARD_PIN_I2C_BUS_POWER,
+            .pin_bit_mask = board_pin_bit_mask(BOARD_PIN_I2C_BUS_POWER),
             .mode = GPIO_MODE_OUTPUT,
         };
         esp_err_t pwr_err = gpio_config(&pwr_conf);

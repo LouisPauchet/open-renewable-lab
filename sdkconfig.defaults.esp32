@@ -4,10 +4,13 @@
 # Merged automatically on top of sdkconfig.defaults when you run
 # `idf.py set-target esp32`.
 #
-# Remember to also select "Generic ESP32 DevKit" under
-# "Walter Sensor Node Board Selection" in `idf.py menuconfig` (or set
-# CONFIG_BOARD_VARIANT_ESP32_DEVKIT_TEST=y directly in sdkconfig) -
-# set-target alone does not switch the pin mapping.
+# Also pre-selects "Generic ESP32 DevKit" under "Walter Sensor Node
+# Board Selection" (components/board_pins/Kconfig.projbuild) as the
+# default pairing for this target, so a fresh `idf.py set-target esp32`
+# just works without an extra menuconfig step. Override in
+# `idf.py menuconfig` if you ever want esp32 + Walter Feels pins
+# (not a real hardware combination, but nothing stops you).
+CONFIG_BOARD_VARIANT_ESP32_DEVKIT_TEST=y
 
 # Most ESP32 DevKit V1 boards/clones ship with 4MB flash. TODO: check
 # your specific board (some clones have 16MB) and adjust if needed.

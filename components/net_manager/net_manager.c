@@ -124,7 +124,11 @@ esp_err_t net_manager_init(void)
 
     if (sta_wanted) {
         wifi_config_t sta_cfg = { 0 };
-        snprintf((char *)sta_cfg.sta.ssid, sizeof(sta_cfg.sta.ssid), "%s", net.wifi_sta_ssid);
+        /* wifi_config_t's ssid[32] has no room for a trailing NUL if the
+         * SSID is a full 32 characters, so copy by length rather than via
+         * snprintf (which GCC correctly flags as truncating in that case). */
+        size_t ssid_len = strnlen(net.wifi_sta_ssid, sizeof(sta_cfg.sta.ssid));
+        memcpy(sta_cfg.sta.ssid, net.wifi_sta_ssid, ssid_len);
         snprintf((char *)sta_cfg.sta.password, sizeof(sta_cfg.sta.password), "%s", net.wifi_sta_password);
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
     }

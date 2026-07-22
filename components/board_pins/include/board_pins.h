@@ -30,6 +30,7 @@
  */
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "driver/gpio.h"
 
@@ -141,4 +142,16 @@
 static inline bool board_pin_is_set(int gpio_num)
 {
     return gpio_num != BOARD_PIN_NOT_SET;
+}
+
+/* `1ULL << BOARD_PIN_xxx` written directly at a call site is a compile-time
+ * constant shift as far as GCC's front end is concerned, so on board
+ * variants where that pin is BOARD_PIN_NOT_SET (-1) it trips
+ * -Werror=shift-count-negative even though the call is always guarded by
+ * board_pin_is_set() at runtime. Routing the shift through a function
+ * parameter (as here) keeps it from being evaluated as a constant
+ * expression at parse time. */
+static inline uint64_t board_pin_bit_mask(int gpio_num)
+{
+    return (uint64_t)1 << gpio_num;
 }

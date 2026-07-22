@@ -1,2 +1,17 @@
 dependencies:
-  dptechnics/walter-modem: "^1.5.0"
+  # cJSON is no longer bundled in-tree as a "json" component in this
+  # ESP-IDF version - fetched from the component registry instead.
+  # Used throughout (config_store, web_portal, mqtt_client).
+  espressif/cjson: "^1.7.15"
+  # esp-mqtt, likewise moved out of the in-tree "mqtt" component in this
+  # ESP-IDF version - used by mqtt_client/backend_esp_mqtt.c.
+  espressif/mqtt: "*"
+  # Only resolvable on esp32s3 (the Walter module's chip) - the package
+  # itself declares no other supported targets. Gated so `idf.py
+  # set-target esp32` (the ESP32 DevKit V1 test-rig target, see
+  # board_pins.h) doesn't fail dependency resolution over a component
+  # that build is never going to use.
+  dptechnics/walter-modem:
+    version: "^1.5.0"
+    rules:
+      - if: "target == esp32s3"

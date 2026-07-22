@@ -9,9 +9,9 @@
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "mbedtls/sha256.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "psa/crypto.h"
 
 static const char *TAG = "config_store";
 static const char *NVS_NAMESPACE = "cfg";
@@ -55,15 +55,27 @@ static bool hex_to_bytes(const char *hex, uint8_t *out, size_t out_len)
     return true;
 }
 
+/* mbedtls's legacy per-algorithm API (mbedtls/sha256.h) has been
+ * removed in this mbedtls version - mbedtls/include only exposes a
+ * "private" subtree now. PSA Crypto (psa/crypto.h) is the only public
+ * hashing API left; psa_crypto_init() is called once in
+ * config_store_init(). */
 static void hash_with_salt(const char *plaintext, const uint8_t salt[8], uint8_t out_hash[32])
 {
-    mbedtls_sha256_context ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_starts(&ctx, 0 /* SHA-256, not 224 */);
-    mbedtls_sha256_update(&ctx, salt, 8);
-    mbedtls_sha256_update(&ctx, (const unsigned char *)plaintext, strlen(plaintext));
-    mbedtls_sha256_finish(&ctx, out_hash);
-    mbedtls_sha256_free(&ctx);
+    uint8_t buf[8 + 128];
+    size_t plaintext_len = strlen(plaintext);
+    if (plaintext_len > sizeof(buf) - 8) {
+        plaintext_len = sizeof(buf) - 8; /* defensive clamp; passwords are always far shorter */
+    }
+    memcpy(buf, salt, 8);
+    memcpy(buf + 8, plaintext, plaintext_len);
+
+    size_t hash_len = 0;
+    psa_status_t status = psa_hash_compute(PSA_ALG_SHA_256, buf, 8 + plaintext_len, out_hash, 32, &hash_len);
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "psa_hash_compute failed: %d", (int)status);
+        memset(out_hash, 0, 32); /* should never happen; avoid leaving the hash uninitialized */
+    }
 }
 
 static int json_get_int(const cJSON *obj, const char *key, int def)
@@ -139,6 +151,7 @@ cJSON *config_store_variable_to_json(const variable_config_t *v)
         cJSON_AddNumberToObject(addr, "i2c_addr", v->addr.i2c.i2c_addr);
         cJSON_AddNumberToObject(addr, "device_type", v->addr.i2c.device_type);
         cJSON_AddNumberToObject(addr, "channel_index", v->addr.i2c.channel_index);
+        cJSON_AddNumberToObject(addr, "gain", v->addr.i2c.gain);
     }
 
     cJSON_AddStringToObject(o, "unit", v->unit);
@@ -166,6 +179,8 @@ bool config_store_variable_from_json(const cJSON *o, variable_config_t *v)
         v->addr.i2c.i2c_addr = (uint8_t)json_get_int(addr, "i2c_addr", 0);
         v->addr.i2c.device_type = (uint8_t)json_get_int(addr, "device_type", 0);
         v->addr.i2c.channel_index = (uint8_t)json_get_int(addr, "channel_index", 0);
+        /* default matches this driver's old hardcoded PGA, for configs saved before gain was configurable */
+        v->addr.i2c.gain = (uint8_t)json_get_int(addr, "gain", 1);
     }
 
     json_get_str(o, "unit", v->unit, sizeof(v->unit), "");
@@ -360,6 +375,12 @@ esp_err_t config_store_init(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+
+    psa_status_t psa_status = psa_crypto_init();
+    if (psa_status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "psa_crypto_init failed: %d", (int)psa_status);
+        return ESP_FAIL;
+    }
 
     s_mutex = xSemaphoreCreateMutex();
     if (!s_mutex) {
