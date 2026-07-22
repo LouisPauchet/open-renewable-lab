@@ -38,6 +38,8 @@ typedef struct {
     uint8_t i2c_addr;        /* 7-bit I2C address */
     uint8_t device_type;     /* looked up in the i2c_sensor_registry */
     uint8_t channel_index;   /* e.g. ADC channel, or sub-value index for multi-value devices */
+    uint8_t gain;            /* I2C_DEVICE_TYPE_ADS111X only: raw 3-bit PGA select (0-7, see
+                              * ads111x.c's gain table) - ignored by other device types */
 } i2c_addr_t;
 
 typedef struct {

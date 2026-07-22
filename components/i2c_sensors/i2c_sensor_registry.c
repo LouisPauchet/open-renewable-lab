@@ -1,10 +1,11 @@
 #include "i2c_sensor_registry.h"
 
-esp_err_t i2c_sensor_read(uint8_t device_type, uint8_t i2c_addr, uint8_t channel_index, double *out_value)
+esp_err_t i2c_sensor_read(uint8_t device_type, uint8_t i2c_addr, uint8_t channel_index, uint8_t gain,
+                          double *out_value)
 {
     switch (device_type) {
         case I2C_DEVICE_TYPE_ADS111X:
-            return ads111x_read_channel(i2c_addr, channel_index, out_value);
+            return ads111x_read_channel(i2c_addr, channel_index, gain, out_value);
         case I2C_DEVICE_TYPE_GENERIC_REG16:
             return generic_read_register16(i2c_addr, channel_index, out_value);
         default:
@@ -18,5 +19,5 @@ esp_err_t i2c_variable_read(const variable_config_t *var, double *out_value)
         return ESP_ERR_INVALID_ARG;
     }
     return i2c_sensor_read(var->addr.i2c.device_type, var->addr.i2c.i2c_addr, var->addr.i2c.channel_index,
-                            out_value);
+                            var->addr.i2c.gain, out_value);
 }

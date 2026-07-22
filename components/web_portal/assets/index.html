@@ -94,6 +94,9 @@ const ADS111X_CHANNEL_LABELS = {
   0: "AIN0-AIN1", 1: "AIN0-AIN3", 2: "AIN1-AIN3", 3: "AIN2-AIN3",
   4: "AIN0", 5: "AIN1", 6: "AIN2", 7: "AIN3",
 };
+const ADS111X_GAIN_LABELS = {
+  0: "+/-6.144V", 1: "+/-4.096V", 2: "+/-2.048V", 3: "+/-1.024V", 4: "+/-0.512V", 5: "+/-0.256V",
+};
 
 async function api(path, opts) {
   opts = opts || {};
@@ -175,7 +178,7 @@ function aggMaskToNames(mask) {
 }
 function variableFormFields(v) {
   v = v || { name: "", bus_type: 0, unit: "", sample_interval_ms: 60000, log_interval_ms: 300000, aggregate_mask: 1, enabled: true,
-             addr: { address: "0", parameter_index: 0, i2c_addr: 0, device_type: 0, channel_index: 0 } };
+             addr: { address: "0", parameter_index: 0, i2c_addr: 0, device_type: 0, channel_index: 0, gain: 1 } };
   return `
     <div class="row">
       <div><label>Name <input name="name" value="${v.name}" required></label></div>
@@ -213,6 +216,17 @@ function variableFormFields(v) {
           <option value="3" ${(v.addr.channel_index || 0) == 3 ? "selected" : ""}>AIN2 - AIN3 (differential)</option>
         </select>
       </label></div>
+      <div><label>ADS111x gain / full-scale range
+        <select name="i2c_gain_ads111x">
+          <option value="0" ${(v.addr.gain ?? 1) == 0 ? "selected" : ""}>+/-6.144V (lowest resolution)</option>
+          <option value="1" ${(v.addr.gain ?? 1) == 1 ? "selected" : ""}>+/-4.096V</option>
+          <option value="2" ${(v.addr.gain ?? 1) == 2 ? "selected" : ""}>+/-2.048V</option>
+          <option value="3" ${(v.addr.gain ?? 1) == 3 ? "selected" : ""}>+/-1.024V</option>
+          <option value="4" ${(v.addr.gain ?? 1) == 4 ? "selected" : ""}>+/-0.512V</option>
+          <option value="5" ${(v.addr.gain ?? 1) == 5 ? "selected" : ""}>+/-0.256V (highest resolution)</option>
+        </select>
+        <small>Pick the smallest range that still covers your signal's peak. The chip's absolute max input is its own supply voltage (VDD) + 0.3V, regardless of this setting.</small>
+      </label></div>
     </div>
     <div class="row" data-i2c-mode="1">
       <div><label>Register address <input type="number" name="i2c_channel_generic" value="${v.addr.channel_index || 0}"></label></div>
@@ -239,12 +253,13 @@ function readVariableForm(form) {
   const channel_index = device_type === 0
     ? parseInt(fd.get("i2c_channel_ads111x") || "4", 10)
     : parseInt(fd.get("i2c_channel_generic") || "0", 10);
+  const gain = parseInt(fd.get("i2c_gain_ads111x") || "1", 10);
   return {
     name: fd.get("name"), unit: fd.get("unit") || "",
     bus_type,
     addr: bus_type === 0
       ? { address: (fd.get("sdi12_address") || "0")[0], parameter_index: parseInt(fd.get("sdi12_parameter_index") || "0", 10) }
-      : { i2c_addr: parseInt(fd.get("i2c_addr") || "0", 10), device_type, channel_index },
+      : { i2c_addr: parseInt(fd.get("i2c_addr") || "0", 10), device_type, channel_index, gain },
     sample_interval_ms: parseInt(fd.get("sample_interval_ms"), 10),
     log_interval_ms: parseInt(fd.get("log_interval_ms"), 10),
     aggregate_mask: mask,
@@ -316,7 +331,8 @@ async function refreshVariables() {
   tbody.innerHTML = "";
   for (const v of vars) {
     const i2cChannelLabel = v.addr.device_type === 0
-      ? (ADS111X_CHANNEL_LABELS[v.addr.channel_index] || v.addr.channel_index)
+      ? (ADS111X_CHANNEL_LABELS[v.addr.channel_index] || v.addr.channel_index) +
+        " @ " + (ADS111X_GAIN_LABELS[v.addr.gain] || ADS111X_GAIN_LABELS[1])
       : ("reg " + v.addr.channel_index);
     const addr = v.bus_type === 0 ? ("addr " + v.addr.address + " #" + v.addr.parameter_index)
                                    : ("0x" + v.addr.i2c_addr.toString(16) + " " + i2cChannelLabel);

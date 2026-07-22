@@ -940,27 +940,30 @@ pairs (`AIN0-AIN1`, `AIN0-AIN3`, `AIN1-AIN3`, `AIN2-AIN3`) are available.
 E.g. for differential AIN0-AIN1 and AIN2-AIN3 on each of two boards,
 that's four variables total (one per pair per board).
 
-### 19.3 A dependency risk worth knowing about
+Each variable also has its own **gain / full-scale range** setting
+(`+/-6.144V` down to `+/-0.256V`) — pick the smallest range that still
+comfortably covers that signal's expected peak, for the best resolution.
+Two different variables on the same or different ADS1115 boards can use
+different gains (e.g. a 0–5V signal at `+/-6.144V` and a 0–1.5V signal at
+`+/-2.048V` on the same chip, on different inputs). **This setting does
+not change the chip's absolute maximum input voltage**, which is always
+its own supply voltage (`VDD`) + 0.3V regardless of gain — feeding a 0–5V
+signal into an ADS1115 powered from the DevKit's 3.3V rail will exceed
+that limit no matter what gain is selected; that board needs to be
+powered at 5V instead (or the signal scaled down with a divider first).
 
-`main/idf_component.yml` unconditionally declares `dptechnics/walter-modem`
-as a dependency, and `mqtt_client`/`web_portal` unconditionally `REQUIRES`
-`cellular_transport` (which in turn requires that managed component) —
-none of this is currently gated by board variant or chip target. If that
-managed component's own manifest restricts which chip targets it
-supports, building for `esp32` could fail at dependency-resolution time
-even though nothing at runtime would ever use it for an I2C-only test rig.
+### 19.3 Component-manager target gating (already handled)
 
-This wasn't possible to check in the environment this firmware was
-written in (no network access to the component registry). If you hit a
-target-compatibility error from the component manager: the cellular code
-path can be made fully build-optional by gating (behind a
-`#if !CONFIG_BOARD_VARIANT_ESP32_DEVKIT_TEST`-style check, or a dedicated
-Kconfig option) the `walter-modem` entry in `idf_component.yml`, the
-`cellular_transport`/`gnss_position` `REQUIRES` in `main`, `mqtt_client`,
-and `web_portal`'s `CMakeLists.txt`, and the corresponding `#include`s and
-call sites in `mqtt_client_bridge.c` and `api_status.c` — this wasn't done
-preemptively since it's a non-trivial change across four components and
-may not be necessary at all.
+`main/idf_component.yml`'s `dptechnics/walter-modem` dependency is gated
+with a component-manager `rules: - if: "target == esp32s3"` clause (that
+package only publishes versions for `esp32s3`), and `cellular_transport`'s
+`CMakeLists.txt` only adds it to `REQUIRES` `if(CONFIG_IDF_TARGET_ESP32S3)`.
+The WalterModem-dependent function bodies in `cellular_transport.cpp` and
+`backend_walter_mqtt.cpp` are likewise wrapped in
+`#if CONFIG_IDF_TARGET_ESP32S3 ... #else ... #endif`, falling back to
+`ESP_ERR_NOT_SUPPORTED` stubs on other targets — so `idf.py set-target esp32`
+resolves and builds cleanly without ever touching the modem SDK. This was
+confirmed by an actual `esp32` build, not just inferred from the manifest.
 
 ---
 
