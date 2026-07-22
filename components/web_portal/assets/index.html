@@ -90,6 +90,10 @@
 <script>
 const $ = (sel, el) => (el || document).querySelector(sel);
 const AGG_BITS = [ ["raw", 1], ["mean", 2], ["min", 4], ["max", 8], ["stddev", 16] ];
+const ADS111X_CHANNEL_LABELS = {
+  0: "AIN0-AIN1", 1: "AIN0-AIN3", 2: "AIN1-AIN3", 3: "AIN2-AIN3",
+  4: "AIN0", 5: "AIN1", 6: "AIN2", 7: "AIN3",
+};
 
 async function api(path, opts) {
   opts = opts || {};
@@ -189,8 +193,29 @@ function variableFormFields(v) {
     </div>
     <div class="row">
       <div><label>I2C address (decimal) <input type="number" name="i2c_addr" value="${v.addr.i2c_addr || 0}"></label></div>
-      <div><label>I2C device type id <input type="number" name="i2c_device_type" value="${v.addr.device_type || 0}"></label></div>
-      <div><label>I2C channel index <input type="number" name="i2c_channel_index" value="${v.addr.channel_index || 0}"></label></div>
+      <div><label>I2C device type
+        <select name="i2c_device_type" id="i2c-device-type-select">
+          <option value="0" ${(v.addr.device_type || 0) == 0 ? "selected" : ""}>ADS111x (16-bit ADC)</option>
+          <option value="1" ${(v.addr.device_type || 0) == 1 ? "selected" : ""}>Generic (raw 16-bit register)</option>
+        </select>
+      </label></div>
+    </div>
+    <div class="row" data-i2c-mode="0">
+      <div><label>ADS111x input
+        <select name="i2c_channel_ads111x">
+          <option value="4" ${(v.addr.channel_index || 0) == 4 ? "selected" : ""}>AIN0 (single-ended)</option>
+          <option value="5" ${(v.addr.channel_index || 0) == 5 ? "selected" : ""}>AIN1 (single-ended)</option>
+          <option value="6" ${(v.addr.channel_index || 0) == 6 ? "selected" : ""}>AIN2 (single-ended)</option>
+          <option value="7" ${(v.addr.channel_index || 0) == 7 ? "selected" : ""}>AIN3 (single-ended)</option>
+          <option value="0" ${(v.addr.channel_index || 0) == 0 ? "selected" : ""}>AIN0 - AIN1 (differential)</option>
+          <option value="1" ${(v.addr.channel_index || 0) == 1 ? "selected" : ""}>AIN0 - AIN3 (differential)</option>
+          <option value="2" ${(v.addr.channel_index || 0) == 2 ? "selected" : ""}>AIN1 - AIN3 (differential)</option>
+          <option value="3" ${(v.addr.channel_index || 0) == 3 ? "selected" : ""}>AIN2 - AIN3 (differential)</option>
+        </select>
+      </label></div>
+    </div>
+    <div class="row" data-i2c-mode="1">
+      <div><label>Register address <input type="number" name="i2c_channel_generic" value="${v.addr.channel_index || 0}"></label></div>
     </div>
     <div class="row">
       <div><label>Sample interval (ms) <input type="number" name="sample_interval_ms" value="${v.sample_interval_ms}" required></label></div>
@@ -210,23 +235,35 @@ function readVariableForm(form) {
   let mask = 0;
   for (const [name, bit] of AGG_BITS) if (fd.get("agg_" + name)) mask |= bit;
   const bus_type = parseInt(fd.get("bus_type"), 10);
+  const device_type = parseInt(fd.get("i2c_device_type") || "0", 10);
+  const channel_index = device_type === 0
+    ? parseInt(fd.get("i2c_channel_ads111x") || "4", 10)
+    : parseInt(fd.get("i2c_channel_generic") || "0", 10);
   return {
     name: fd.get("name"), unit: fd.get("unit") || "",
     bus_type,
     addr: bus_type === 0
       ? { address: (fd.get("sdi12_address") || "0")[0], parameter_index: parseInt(fd.get("sdi12_parameter_index") || "0", 10) }
-      : { i2c_addr: parseInt(fd.get("i2c_addr") || "0", 10), device_type: parseInt(fd.get("i2c_device_type") || "0", 10), channel_index: parseInt(fd.get("i2c_channel_index") || "0", 10) },
+      : { i2c_addr: parseInt(fd.get("i2c_addr") || "0", 10), device_type, channel_index },
     sample_interval_ms: parseInt(fd.get("sample_interval_ms"), 10),
     log_interval_ms: parseInt(fd.get("log_interval_ms"), 10),
     aggregate_mask: mask,
     enabled: !!fd.get("enabled"),
   };
 }
+function updateI2cModeVisibility(form) {
+  const deviceType = form.querySelector("#i2c-device-type-select").value;
+  form.querySelectorAll("[data-i2c-mode]").forEach(el => {
+    el.classList.toggle("hidden", el.dataset.i2cMode !== deviceType);
+  });
+}
 function openVariableForm(v, id) {
   const form = $("#variable-form");
   form.innerHTML = variableFormFields(v);
   form.classList.remove("hidden");
   $("#cancel-variable-btn", form).addEventListener("click", () => form.classList.add("hidden"));
+  updateI2cModeVisibility(form);
+  form.querySelector("#i2c-device-type-select").addEventListener("change", () => updateI2cModeVisibility(form));
   form.onsubmit = async (e) => {
     e.preventDefault();
     $("#variables-msg").textContent = "";
@@ -278,8 +315,11 @@ async function refreshVariables() {
   const tbody = $("#variables-table tbody");
   tbody.innerHTML = "";
   for (const v of vars) {
+    const i2cChannelLabel = v.addr.device_type === 0
+      ? (ADS111X_CHANNEL_LABELS[v.addr.channel_index] || v.addr.channel_index)
+      : ("reg " + v.addr.channel_index);
     const addr = v.bus_type === 0 ? ("addr " + v.addr.address + " #" + v.addr.parameter_index)
-                                   : ("0x" + v.addr.i2c_addr.toString(16) + " ch" + v.addr.channel_index);
+                                   : ("0x" + v.addr.i2c_addr.toString(16) + " " + i2cChannelLabel);
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${v.name}${v.enabled ? "" : " (disabled)"}</td>
       <td>${v.bus_type === 0 ? "SDI-12" : "I2C"}</td><td>${addr}</td>

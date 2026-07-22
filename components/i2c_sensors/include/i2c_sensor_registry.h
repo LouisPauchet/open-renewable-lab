@@ -10,7 +10,7 @@ extern "C" {
 /* variable_config_t.addr.i2c.device_type values. Each maps to a
  * driver in this component; add new device types here + a matching
  * driver file + a case in i2c_sensor_registry.c's dispatcher. */
-#define I2C_DEVICE_TYPE_ADS111X 0     /* TI ADS1113/1114/1115 16-bit ADC, single-ended channels 0-3 */
+#define I2C_DEVICE_TYPE_ADS111X 0     /* TI ADS1113/1114/1115 16-bit ADC; channel_index 0-7 = the chip's raw MUX select (0-3 differential pairs, 4-7 single-ended) - see ads111x.c */
 #define I2C_DEVICE_TYPE_GENERIC_REG16 1 /* fallback: raw signed 16-bit big-endian register read, no scaling */
 
 /* device_type-specific drivers, called by the registry dispatcher -

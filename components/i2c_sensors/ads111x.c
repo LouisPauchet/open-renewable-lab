@@ -5,6 +5,14 @@
  * Returns the measured voltage in volts - no additional scaling, since
  * the portal's per-variable "unit" label is just a free-form display
  * string the student sets, not interpreted by firmware.
+ *
+ * `channel` is the ADS111x's raw 3-bit MUX select (datasheet table),
+ * so a variable's I2C "channel index" (0-7) maps 1:1 onto the chip's
+ * own input-multiplexer modes:
+ *   0 = AIN0-AIN1 (differential)   4 = AIN0 vs GND (single-ended)
+ *   1 = AIN0-AIN3 (differential)   5 = AIN1 vs GND (single-ended)
+ *   2 = AIN1-AIN3 (differential)   6 = AIN2 vs GND (single-ended)
+ *   3 = AIN2-AIN3 (differential)   7 = AIN3 vs GND (single-ended)
  */
 
 #include "freertos/FreeRTOS.h"
@@ -24,7 +32,7 @@ esp_err_t ads111x_read_channel(uint8_t i2c_addr, uint8_t channel, double *out_va
         return ESP_ERR_INVALID_ARG;
     }
 
-    uint16_t mux = (uint16_t)(0x4 + (channel & 0x3)); /* single-ended AIN0-3 */
+    uint16_t mux = (uint16_t)(channel & 0x7); /* direct MUX select - see file header table */
     uint16_t config = 0x8000u        /* OS: start single conversion */
                        | (mux << 12) /* MUX */
                        | (0x1 << 9)  /* PGA: 001 = +/-4.096V */

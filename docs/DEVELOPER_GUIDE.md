@@ -921,12 +921,22 @@ on an ADS1115 breakout is for):
 - Both boards: `SDA` → GPIO21, `SCL` → GPIO22, `VDD`/`GND` → the DevKit's
   3.3V/GND (see `BOARD_PIN_I2C_SDA`/`BOARD_PIN_I2C_SCL` in `board_pins.h`
   for this variant).
-- Board 1: tie `ADDR` to `GND` → address `0x48` (decimal 72).
-- Board 2: tie `ADDR` to `VDD` → address `0x49` (decimal 73).
+- Give each board a distinct address by tying its `ADDR` pin
+  differently. The four standard options (per the ADS1115 datasheet)
+  are `GND`→`0x48`, `VDD`→`0x49`, `SDA`→`0x4A`, `SCL`→`0x4B` — confirm
+  what your specific boards actually respond at with the portal's
+  **Scan I2C bus** button rather than assuming (`0x39` isn't one of
+  the four standard options, so if you see something like that, it's
+  worth double-checking wiring/breakout documentation rather than
+  treating it as routine).
 
-Then in the portal, add one variable per ADC channel you want to read:
-bus type I2C, I2C address `72` or `73`, device type `0` (ADS111x),
-channel index `0`-`3`.
+Then in the portal, add one variable per ADC input you want to read: bus
+type I2C, the I2C address you found via the scan (in decimal — e.g. `72`
+for `0x48`), device type `0` (ADS111x), and pick the input from the
+channel dropdown — both single-ended (`AIN0`-`AIN3`) and differential
+pairs (`AIN0-AIN1`, `AIN0-AIN3`, `AIN1-AIN3`, `AIN2-AIN3`) are available.
+E.g. for differential AIN0-AIN1 and AIN2-AIN3 on each of two boards,
+that's four variables total (one per pair per board).
 
 ### 19.3 A dependency risk worth knowing about
 

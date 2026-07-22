@@ -55,10 +55,14 @@
 
 /* Standard ESP32 DevKit V1 I2C pins (the de facto default used by
  * Arduino's Wire library and most DevKit silkscreens/breakouts). Wire
- * two ADS1115 boards here with their ADDR pins tied differently (e.g.
- * GND -> 0x48, VDD -> 0x49) so they coexist on one bus - configure one
- * "variable" per ADC channel you want in the portal, with i2c_addr set
- * to 72 (0x48) or 73 (0x49) and device_type 0 (ADS111x). */
+ * two ADS1115 boards here with their ADDR pins tied differently so
+ * they coexist on one bus (standard options: GND=0x48, VDD=0x49,
+ * SDA=0x4A, SCL=0x4B - confirm your actual boards' addresses with the
+ * portal's "Scan I2C bus" button rather than assuming) - configure one
+ * "variable" per ADC input you want in the portal, with device_type 0
+ * (ADS111x) and the channel index set via the portal's dropdown
+ * (supports both single-ended and differential pairs - see
+ * ads111x.c's header comment for the full mapping). */
 #define BOARD_I2C_PORT (-1) /* -1 = let the I2C driver auto-assign a free port */
 #define BOARD_PIN_I2C_SDA GPIO_NUM_21
 #define BOARD_PIN_I2C_SCL GPIO_NUM_22
