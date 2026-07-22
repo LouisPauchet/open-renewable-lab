@@ -1,26 +1,19 @@
-# Walter module is ESP32-S3 based.
-CONFIG_IDF_TARGET="esp32s3"
+# Common settings for every supported target/board variant. Target-
+# specific settings (flash size, PSRAM, console) live in
+# sdkconfig.defaults.<target> (ESP-IDF merges them automatically based
+# on `idf.py set-target`) - see sdkconfig.defaults.esp32s3 (Walter,
+# production) and sdkconfig.defaults.esp32 (generic ESP32 DevKit,
+# hardware-less test rig - see board_pins.h's BOARD_VARIANT_* Kconfig
+# choice).
 
-# TODO: confirm exact flash/PSRAM size for your Walter module revision
-# (datasheet/schematic) and adjust below if these defaults are wrong.
-CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
-CONFIG_SPIRAM=y
-CONFIG_SPIRAM_MODE_OCT=y
-CONFIG_SPIRAM_SPEED_80M=y
+# Default target if `idf.py set-target` is never run explicitly. The
+# project's primary/production target is the Walter module (ESP32-S3);
+# run `idf.py set-target esp32` for the DevKit test rig.
+CONFIG_IDF_TARGET="esp32s3"
 
 # No OTA in v1 - single factory app, larger NVS for the config blob + SPA assets in flash.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
-
-# The Walter Feels schematic shows IO43/IO44 (UART0's default TX0/RX0
-# pins) reused as 12V_EN/CAN_EN on the carrier board, not wired to the
-# cellular modem - the modem link is apparently internal to the Walter
-# module. Console output still defaults to USB-Serial-JTAG rather than
-# a UART pin regardless: it's a clean choice for a headless field
-# device either way and avoids relying on whichever UART the
-# walter-modem library ends up claiming internally.
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # FreeRTOS / watchdog tuning - generous timeout since SDI-12 measurement
 # commands can legitimately take several seconds; panic+reboot (rather

@@ -41,6 +41,10 @@ idf.py build
 idf.py -p <PORT> flash monitor
 ```
 
+**No Walter Feels board yet?** You can test the firmware on a plain ESP32
+DevKit V1 with I2C sensors (e.g. two ADS1115 ADCs) instead - see
+[DEVELOPER_GUIDE.md §19](docs/DEVELOPER_GUIDE.md#19-testing-without-walter-feels-hardware).
+
 ## Before first flash: check `board_pins.h`
 
 `components/board_pins/include/board_pins.h` holds every Walter Feels GPIO

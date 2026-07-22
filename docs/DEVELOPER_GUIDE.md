@@ -30,8 +30,9 @@ at the end.
 16. [Device identification (`device_id`)](#16-device-identification-device_id)
 17. [Web portal (`web_portal`)](#17-web-portal-web_portal)
 18. [Known limitations and low-confidence areas](#18-known-limitations-and-low-confidence-areas)
-19. [How to extend the firmware](#19-how-to-extend-the-firmware)
-20. [Glossary](#20-glossary)
+19. [Testing without Walter Feels hardware](#19-testing-without-walter-feels-hardware)
+20. [How to extend the firmware](#20-how-to-extend-the-firmware)
+21. [Glossary](#21-glossary)
 
 ---
 
@@ -324,6 +325,13 @@ singleton.
 
 `components/board_pins/include/board_pins.h` is the **single source of
 truth** for every GPIO number — no other component hardcodes a pin number.
+
+It has two `#if`-branched variants selected via a Kconfig choice
+(`components/board_pins/Kconfig.projbuild`, menuconfig → "Walter Sensor
+Node Board Selection"): the production Walter Feels mapping (below), and a
+minimal I2C-only mapping for testing on a plain ESP32 DevKit V1 without a
+Walter Feels board in hand — see
+[section 19](#19-testing-without-walter-feels-hardware) for that workflow.
 
 Most pins are now confirmed against the actual Walter Feels schematic
 (supplied mid-project):
@@ -865,9 +873,88 @@ them in a real deployment:
 
 ---
 
-## 19. How to extend the firmware
+## 19. Testing without Walter Feels hardware
 
-### 19.1 Adding a new I2C sensor driver
+If you don't have a Walter/Walter Feels board yet, you can still exercise
+the sensor pipeline, the config store, and the web portal end-to-end on a
+plain **ESP32 DevKit V1** wired to one or more I2C sensors (e.g. two
+ADS1115 ADC boards) — SDI-12, SD card, and cellular are simply left
+disabled, exactly like they would be on real hardware with those pins
+unset (see [section 8](#8-board-pin-mapping-board_pins)).
+
+### 19.1 Why this needs more than flashing the same firmware
+
+Two things differ, not just the board_pins.h values:
+
+- **Chip target**: the DevKit V1 uses a classic **ESP32** (Xtensa LX6),
+  not the **ESP32-S3** the rest of this project targets. Some existing
+  `board_pins.h` GPIO numbers (e.g. 40-43) don't even exist on classic
+  ESP32, and the S3-specific octal-PSRAM/USB-Serial-JTAG sdkconfig
+  settings don't apply either.
+- **Pin mapping**: Walter Feels' SDI-12/I2C/SD pins are meaningless on a
+  bare DevKit — there's no SN74LV1T126 buffer, no SDMMC wiring, nothing.
+
+Both are handled by two independent switches you set together:
+
+| Switch | How | Affects |
+|---|---|---|
+| Chip target | `idf.py set-target esp32` | Which `sdkconfig.defaults.<target>` file gets merged (`sdkconfig.defaults.esp32` vs. `sdkconfig.defaults.esp32s3`) — flash size, PSRAM, console. |
+| Board variant | `idf.py menuconfig` → "Walter Sensor Node Board Selection" → "Generic ESP32 DevKit V1" (`CONFIG_BOARD_VARIANT_ESP32_DEVKIT_TEST`) | Which `#if` branch of `board_pins.h` is compiled — see `components/board_pins/Kconfig.projbuild`. |
+
+They're independent settings (nothing stops you from selecting the wrong
+combination), but only `esp32` + `ESP32_DEVKIT_TEST` and `esp32s3` +
+`WALTER_FEELS` are meaningful pairings.
+
+### 19.2 Step by step
+
+```sh
+idf.py set-target esp32
+idf.py menuconfig   # Walter Sensor Node Board Selection -> Generic ESP32 DevKit V1
+idf.py build
+idf.py -p <PORT> flash monitor
+```
+
+Wiring, for two ADS1115 boards sharing the bus (I2C requires each device
+on a bus to have a distinct address — this is exactly what the `ADDR` pin
+on an ADS1115 breakout is for):
+
+- Both boards: `SDA` → GPIO21, `SCL` → GPIO22, `VDD`/`GND` → the DevKit's
+  3.3V/GND (see `BOARD_PIN_I2C_SDA`/`BOARD_PIN_I2C_SCL` in `board_pins.h`
+  for this variant).
+- Board 1: tie `ADDR` to `GND` → address `0x48` (decimal 72).
+- Board 2: tie `ADDR` to `VDD` → address `0x49` (decimal 73).
+
+Then in the portal, add one variable per ADC channel you want to read:
+bus type I2C, I2C address `72` or `73`, device type `0` (ADS111x),
+channel index `0`-`3`.
+
+### 19.3 A dependency risk worth knowing about
+
+`main/idf_component.yml` unconditionally declares `dptechnics/walter-modem`
+as a dependency, and `mqtt_client`/`web_portal` unconditionally `REQUIRES`
+`cellular_transport` (which in turn requires that managed component) —
+none of this is currently gated by board variant or chip target. If that
+managed component's own manifest restricts which chip targets it
+supports, building for `esp32` could fail at dependency-resolution time
+even though nothing at runtime would ever use it for an I2C-only test rig.
+
+This wasn't possible to check in the environment this firmware was
+written in (no network access to the component registry). If you hit a
+target-compatibility error from the component manager: the cellular code
+path can be made fully build-optional by gating (behind a
+`#if !CONFIG_BOARD_VARIANT_ESP32_DEVKIT_TEST`-style check, or a dedicated
+Kconfig option) the `walter-modem` entry in `idf_component.yml`, the
+`cellular_transport`/`gnss_position` `REQUIRES` in `main`, `mqtt_client`,
+and `web_portal`'s `CMakeLists.txt`, and the corresponding `#include`s and
+call sites in `mqtt_client_bridge.c` and `api_status.c` — this wasn't done
+preemptively since it's a non-trivial change across four components and
+may not be necessary at all.
+
+---
+
+## 20. How to extend the firmware
+
+### 20.1 Adding a new I2C sensor driver
 
 1. Pick an unused `device_type` number and add a
    `#define I2C_DEVICE_TYPE_<NAME> <n>` to
@@ -887,7 +974,7 @@ them in a real deployment:
    you want a nicer label — see `assets/index.html`'s `variableFormFields()`
    for where device type is currently a bare number input).
 
-### 19.2 Adding a new REST endpoint
+### 20.2 Adding a new REST endpoint
 
 1. Add your handler function to the relevant `api_*.c` file (or create a
    new one, following `api_bus.c` as a minimal example).
@@ -902,7 +989,7 @@ them in a real deployment:
    `wp_read_json_body` helpers from `wp_common.c` for consistent response
    shapes.
 
-### 19.3 Adding a new config field
+### 20.3 Adding a new config field
 
 1. Add the field to the appropriate struct in
    `components/config_store/include/config_schema.h`.
@@ -919,7 +1006,7 @@ them in a real deployment:
 
 ---
 
-## 20. Glossary
+## 21. Glossary
 
 | Term | Meaning |
 |---|---|

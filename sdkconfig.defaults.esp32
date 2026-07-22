@@ -1,0 +1,23 @@
+# ESP32 (classic)-specific defaults for the generic ESP32 DevKit V1
+# hardware-less test rig (no Walter Feels board - I2C sensors only, see
+# board_pins.h's BOARD_VARIANT_ESP32_DEVKIT_TEST Kconfig choice).
+# Merged automatically on top of sdkconfig.defaults when you run
+# `idf.py set-target esp32`.
+#
+# Remember to also select "Generic ESP32 DevKit" under
+# "Walter Sensor Node Board Selection" in `idf.py menuconfig` (or set
+# CONFIG_BOARD_VARIANT_ESP32_DEVKIT_TEST=y directly in sdkconfig) -
+# set-target alone does not switch the pin mapping.
+
+# Most ESP32 DevKit V1 boards/clones ship with 4MB flash. TODO: check
+# your specific board (some clones have 16MB) and adjust if needed.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# No PSRAM assumed - not needed for this I2C-only test rig, and most
+# plain DevKit V1 boards (as opposed to WROVER-based ones) don't have
+# any. Leave CONFIG_SPIRAM unset/disabled (the ESP-IDF default).
+
+# No console override needed: CONFIG_ESP_CONSOLE_UART_DEFAULT (UART0)
+# is the standard ESP-IDF default for this target and matches the
+# DevKit's onboard USB-to-serial chip.

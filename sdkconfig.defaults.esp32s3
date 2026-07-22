@@ -1,0 +1,20 @@
+# ESP32-S3-specific defaults for the Walter module (production target).
+# Merged automatically on top of sdkconfig.defaults when the active
+# target is esp32s3 (the project's default - see sdkconfig.defaults).
+
+# TODO: confirm exact flash/PSRAM size for your Walter module revision
+# (datasheet/schematic) and adjust below if these defaults are wrong.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# The Walter Feels schematic shows IO43/IO44 (UART0's default TX0/RX0
+# pins) reused as 12V_EN/CAN_EN on the carrier board, not wired to the
+# cellular modem - the modem link is apparently internal to the Walter
+# module. Console output still defaults to USB-Serial-JTAG rather than
+# a UART pin regardless: it's a clean choice for a headless field
+# device either way and avoids relying on whichever UART the
+# walter-modem library ends up claiming internally.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

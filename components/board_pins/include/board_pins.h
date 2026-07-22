@@ -1,23 +1,32 @@
 #pragma once
 
 /*
- * Walter Feels carrier-board pin map.
+ * Board pin map - two variants, selected via `idf.py menuconfig` ->
+ * "Walter Sensor Node Board Selection" (components/board_pins/Kconfig.projbuild),
+ * independent of but paired with the chip target (`idf.py set-target`):
  *
- * SDI-12, I2C, and SD card pins below are taken directly from the
- * user-supplied Walter Feels schematic (SDI-12 transceiver sheet +
- * Walter module header pinout) and are considered confirmed. Still
- * placeholders (BOARD_PIN_NOT_SET) where nothing in the supplied
- * schematic pages showed a value: SD card-detect, status LED,
- * force-AP button. Enable-pin ACTIVE LEVELS (TX_EN/RX_EN etc.) are an
- * inference from the SN74LV1T126 datasheet (active-HIGH OE), not
- * something visible in a schematic - verify with a meter if SDI-12
- * doesn't work.
+ *  - BOARD_VARIANT_WALTER_FEELS (default): the production Walter +
+ *    Walter Feels carrier board. Requires chip target esp32s3. SDI-12,
+ *    I2C, and SD card pins are taken directly from the user-supplied
+ *    Walter Feels schematic and are considered confirmed; still
+ *    placeholders (BOARD_PIN_NOT_SET) where nothing in the supplied
+ *    schematic pages showed a value: SD card-detect, status LED,
+ *    force-AP button. Enable-pin ACTIVE LEVELS (TX_EN/RX_EN etc.) are
+ *    an inference from the SN74LV1T126 datasheet (active-HIGH OE), not
+ *    something visible in a schematic - verify with a meter if SDI-12
+ *    doesn't work.
+ *
+ *  - BOARD_VARIANT_ESP32_DEVKIT_TEST: a plain ESP32 DevKit V1 with no
+ *    Walter Feels board at hand, for testing the firmware against real
+ *    I2C sensors (e.g. two ADS1115 ADCs at different addresses) before
+ *    the production board arrives. Requires chip target esp32 (classic).
+ *    Only I2C is wired; SDI-12/SD card/cellular are left unconfigured,
+ *    which each subsystem already handles gracefully (see below).
  *
  * Each subsystem's init function calls board_pin_is_set() on the pins
- * it needs and refuses to start (logging an error) rather than
- * driving an unconfirmed pin - so it's safe to build and flash with
- * remaining placeholders still in place; only the affected subsystem
- * stays disabled.
+ * it needs and refuses to start (logging an error) rather than driving
+ * an unconfirmed pin - so it's safe to build and flash with any pin
+ * still unset; only the affected subsystem stays disabled.
  */
 
 #include <stdbool.h>
@@ -25,6 +34,46 @@
 #include "driver/gpio.h"
 
 #define BOARD_PIN_NOT_SET GPIO_NUM_NC
+
+#if CONFIG_BOARD_VARIANT_ESP32_DEVKIT_TEST
+
+/* ---- Generic ESP32 DevKit V1 (I2C-only test rig) ----
+ * No SDI-12 transceiver, SD card, or cellular modem wired - all left
+ * unconfigured. sdi12_bus_init()/sd_logger_init()/cellular_transport_init()
+ * all fail gracefully (logged, non-fatal) without these, and
+ * sampling_engine falls back to the synthetic stub_sensor for
+ * BUS_TYPE_SDI12 automatically (see app_main.c). */
+#define BOARD_PIN_SDI12_TXD BOARD_PIN_NOT_SET
+#define BOARD_PIN_SDI12_RXD BOARD_PIN_NOT_SET
+#define BOARD_PIN_SDI12_TX_EN BOARD_PIN_NOT_SET
+#define BOARD_PIN_SDI12_RX_EN BOARD_PIN_NOT_SET
+#define BOARD_PIN_SDI12_BUS_POWER BOARD_PIN_NOT_SET
+#define BOARD_PIN_RS485_TX_EN BOARD_PIN_NOT_SET
+#define BOARD_PIN_RS485_RX_EN BOARD_PIN_NOT_SET
+#define BOARD_PIN_RS232_TX_EN BOARD_PIN_NOT_SET
+#define BOARD_PIN_RS232_RX_EN BOARD_PIN_NOT_SET
+
+/* Standard ESP32 DevKit V1 I2C pins (the de facto default used by
+ * Arduino's Wire library and most DevKit silkscreens/breakouts). Wire
+ * two ADS1115 boards here with their ADDR pins tied differently (e.g.
+ * GND -> 0x48, VDD -> 0x49) so they coexist on one bus - configure one
+ * "variable" per ADC channel you want in the portal, with i2c_addr set
+ * to 72 (0x48) or 73 (0x49) and device_type 0 (ADS111x). */
+#define BOARD_I2C_PORT (-1) /* -1 = let the I2C driver auto-assign a free port */
+#define BOARD_PIN_I2C_SDA GPIO_NUM_21
+#define BOARD_PIN_I2C_SCL GPIO_NUM_22
+#define BOARD_PIN_I2C_BUS_POWER BOARD_PIN_NOT_SET /* no switched rail on a plain DevKit - power sensors from 3V3/5V directly */
+#define BOARD_I2C_CLOCK_HZ 100000
+
+#define BOARD_PIN_SD_CLK BOARD_PIN_NOT_SET
+#define BOARD_PIN_SD_CMD BOARD_PIN_NOT_SET
+#define BOARD_PIN_SD_D0 BOARD_PIN_NOT_SET
+#define BOARD_PIN_SD_CARD_DETECT BOARD_PIN_NOT_SET
+
+#define BOARD_PIN_STATUS_LED BOARD_PIN_NOT_SET /* many DevKit V1 clones have an onboard LED on GPIO2, but not universally - verify before wiring logic to it */
+#define BOARD_PIN_FORCE_AP_BUTTON BOARD_PIN_NOT_SET
+
+#else /* BOARD_VARIANT_WALTER_FEELS (default) */
 
 /* ---- SDI-12 bus ----
  * Unlike a typical single-wire half-duplex SDI-12 breakout, Walter
@@ -79,6 +128,8 @@
  * the optional SCD30 CO2 sensor + onboard temp/humidity/pressure/IMU -
  * none wired into firmware, out of scope for v1.
  */
+
+#endif /* BOARD_VARIANT */
 
 static inline bool board_pin_is_set(int gpio_num)
 {

@@ -1,0 +1,31 @@
+menu "Walter Sensor Node Board Selection"
+
+    choice BOARD_VARIANT
+        prompt "Target board"
+        default BOARD_VARIANT_WALTER_FEELS
+        help
+            Which physical board board_pins.h's GPIO assignments should
+            match. This is independent of the chip target (set via
+            `idf.py set-target`) - for the DevKit test rig you need
+            both `idf.py set-target esp32` AND this option set to
+            "Generic ESP32 DevKit".
+
+        config BOARD_VARIANT_WALTER_FEELS
+            bool "Walter + Walter Feels carrier board (production)"
+            help
+                SDI-12, I2C, and SD card pins as wired on the Walter
+                Feels carrier board. Requires the esp32s3 chip target.
+
+        config BOARD_VARIANT_ESP32_DEVKIT_TEST
+            bool "Generic ESP32 DevKit V1 (I2C-only test rig)"
+            help
+                For testing the firmware without a Walter/Walter Feels
+                board in hand: a plain ESP32 DevKit V1 with I2C sensors
+                only (e.g. ADS1115 ADCs) wired to the standard ESP32
+                DevKit I2C pins (GPIO21/22). SDI-12, SD card, and
+                cellular are all left unconfigured/disabled - those
+                subsystems safely no-op without hardware. Requires the
+                esp32 (classic) chip target.
+    endchoice
+
+endmenu
