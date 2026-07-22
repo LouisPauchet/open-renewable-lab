@@ -43,9 +43,10 @@ static bool mqtt_settings_equal(const mqtt_settings_t *a, const mqtt_settings_t 
 {
     return a->enabled == b->enabled && a->port == b->port && a->use_tls == b->use_tls &&
            a->tls_allow_insecure == b->tls_allow_insecure && a->batch_enabled == b->batch_enabled &&
-           a->batch_interval_ms == b->batch_interval_ms && strcmp(a->host, b->host) == 0 &&
-           strcmp(a->client_id, b->client_id) == 0 && strcmp(a->username, b->username) == 0 &&
-           strcmp(a->password, b->password) == 0 && strcmp(a->topic_prefix, b->topic_prefix) == 0;
+           a->batch_interval_ms == b->batch_interval_ms && a->flat_telemetry == b->flat_telemetry &&
+           strcmp(a->host, b->host) == 0 && strcmp(a->client_id, b->client_id) == 0 &&
+           strcmp(a->username, b->username) == 0 && strcmp(a->password, b->password) == 0 &&
+           strcmp(a->topic_prefix, b->topic_prefix) == 0;
 }
 
 static void apply_settings_if_changed(const mqtt_settings_t *cur)
@@ -116,16 +117,60 @@ static void build_json_payload(const aggregate_result_t *r, char *out, size_t ou
     }
 }
 
+/* Flat "<name>_<aggregate>" key shape platforms like ThingsBoard/AWS IoT
+ * expect on their single fixed device telemetry topic - as opposed to
+ * build_json_payload()'s generic {"mean":...,"stddev":...} shape, which
+ * needs a distinct topic per variable (the topic itself carries the
+ * variable name) to stay unambiguous. */
+static void build_flat_json_payload(const aggregate_result_t *r, char *out, size_t out_size)
+{
+    cJSON *o = cJSON_CreateObject();
+    char key[40];
+    if (r->aggregate_mask & AGG_RAW) {
+        snprintf(key, sizeof(key), "%s_raw", r->name);
+        cJSON_AddNumberToObject(o, key, r->raw);
+    }
+    if (r->aggregate_mask & AGG_MEAN) {
+        snprintf(key, sizeof(key), "%s_mean", r->name);
+        cJSON_AddNumberToObject(o, key, r->mean);
+    }
+    if (r->aggregate_mask & AGG_MIN) {
+        snprintf(key, sizeof(key), "%s_min", r->name);
+        cJSON_AddNumberToObject(o, key, r->min);
+    }
+    if (r->aggregate_mask & AGG_MAX) {
+        snprintf(key, sizeof(key), "%s_max", r->name);
+        cJSON_AddNumberToObject(o, key, r->max);
+    }
+    if (r->aggregate_mask & AGG_STDDEV) {
+        snprintf(key, sizeof(key), "%s_stddev", r->name);
+        cJSON_AddNumberToObject(o, key, r->stddev);
+    }
+
+    char *s = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    if (s) {
+        snprintf(out, out_size, "%s", s);
+        cJSON_free(s);
+    } else {
+        out[0] = '\0';
+    }
+}
+
 static void publish_result(const aggregate_result_t *r)
 {
-    char name_safe[32];
-    sanitize_topic_segment(r->name, name_safe, sizeof(name_safe));
-
     char topic[128];
-    snprintf(topic, sizeof(topic), "%s/%s/%s", s_current_settings.topic_prefix, device_id_get(), name_safe);
-
     char payload[256];
-    build_json_payload(r, payload, sizeof(payload));
+
+    if (s_current_settings.flat_telemetry) {
+        snprintf(topic, sizeof(topic), "%s", s_current_settings.topic_prefix);
+        build_flat_json_payload(r, payload, sizeof(payload));
+    } else {
+        char name_safe[32];
+        sanitize_topic_segment(r->name, name_safe, sizeof(name_safe));
+        snprintf(topic, sizeof(topic), "%s/%s/%s", s_current_settings.topic_prefix, device_id_get(), name_safe);
+        build_json_payload(r, payload, sizeof(payload));
+    }
 
     esp_err_t err = s_backend->publish(topic, payload, 1, false);
     if (err != ESP_OK) {
@@ -155,7 +200,11 @@ static void build_position_json_payload(const gnss_fix_t *fix, char *out, size_t
 static void publish_position_now(const gnss_fix_t *fix)
 {
     char topic[96];
-    snprintf(topic, sizeof(topic), "%s/%s/position", s_current_settings.topic_prefix, device_id_get());
+    if (s_current_settings.flat_telemetry) {
+        snprintf(topic, sizeof(topic), "%s", s_current_settings.topic_prefix);
+    } else {
+        snprintf(topic, sizeof(topic), "%s/%s/position", s_current_settings.topic_prefix, device_id_get());
+    }
 
     char payload[192];
     build_position_json_payload(fix, payload, sizeof(payload));

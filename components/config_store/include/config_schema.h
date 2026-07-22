@@ -80,7 +80,15 @@ typedef struct {
     char client_id[32];
     char username[32];
     char password[64];
-    char topic_prefix[64]; /* published topics = "<topic_prefix>/<device_id>/<variable name>" */
+    char topic_prefix[64]; /* published topics = "<topic_prefix>/<device_id>/<variable name>" (unless flat_telemetry) */
+
+    /* When true, publishes go to the literal topic_prefix (no
+     * /<device_id>/<name> suffix) with flat "<name>_<aggregate>" JSON
+     * keys instead of {"mean":...,"stddev":...} - the shape platforms
+     * like ThingsBoard/AWS IoT expect from their single fixed device
+     * telemetry topic. When false (default), the original per-variable
+     * topic + generic JSON shape is used. */
+    bool flat_telemetry;
 
     /* When true, publishes are buffered instead of sent immediately;
      * the connection is opened, the buffer drained, and the connection

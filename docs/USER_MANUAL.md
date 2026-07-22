@@ -260,6 +260,7 @@ won't attempt any connection with default settings.
 | Client ID | An identifier your broker uses to distinguish this connection. Leave blank unless your broker requires something specific. |
 | Username / Password | Your broker credentials, if it requires authentication. The password field is write-only — once set, the portal shows "(already set)" rather than displaying it back to you. |
 | Topic prefix | The first part of every MQTT topic this device publishes to (see [7.3](#73-understanding-topics-and-payloads)). Default: `walter`. |
+| Flat telemetry topic | Off by default (see [7.3](#73-understanding-topics-and-payloads)). Turn this on for platforms like **ThingsBoard** or AWS IoT that expect a single fixed telemetry topic rather than one topic per variable — set **Topic prefix** to that platform's exact topic (e.g. ThingsBoard's `v1/devices/me/telemetry`) and check this box. |
 
 ### 7.2 Testing your connection
 
@@ -314,6 +315,34 @@ If you've enabled position reporting (cellular only — see
 ```json
 {"ts": 1752345600, "time_synced": true, "lat": 78.9231, "lon": 11.9349, "alt": 12.0}
 ```
+
+#### Flat telemetry topic (ThingsBoard, AWS IoT, etc.)
+
+Some platforms don't work with a per-variable topic scheme at all — they
+identify the device from the MQTT connection itself (usually the
+username/access token) and only look at one fixed topic, ignoring
+anything published elsewhere. **ThingsBoard** is the common example: its
+device API only reads `v1/devices/me/telemetry`, so a per-variable topic
+like `v1/devices/me/telemetry/AABBCCDDEEFF/soil_temp` is silently
+dropped — the device can still show as "online" (that only reflects the
+MQTT connection succeeding), while no telemetry ever appears.
+
+Checking **Flat telemetry topic** changes both the topic and the payload
+shape:
+
+- Every publish goes to the literal **Topic prefix** — no device ID or
+  variable name appended.
+- The payload uses one flat JSON key per variable *and* aggregate, named
+  `<variable_name>_<aggregate>`, instead of the `{"mean": ..., "stddev": ...}`
+  shape above. A variable named `soil_temp` with "mean" and "stddev"
+  enabled publishes:
+  ```json
+  {"soil_temp_mean": 21.4, "soil_temp_stddev": 0.3}
+  ```
+
+For ThingsBoard specifically: set **Topic prefix** to `v1/devices/me/telemetry`,
+check **Flat telemetry topic**, and use your device's access token as the
+MQTT **Username** (leave Password blank).
 
 ### 7.4 Batch transmission (saving power)
 
@@ -584,7 +613,9 @@ recording your new one somewhere safe, matters.
 **Default MQTT topic prefix**: `walter`
 
 **MQTT topic format**: `<topic_prefix>/<device_id>/<variable_name>`
-(position: `<topic_prefix>/<device_id>/position`)
+(position: `<topic_prefix>/<device_id>/position`) — or the literal
+`<topic_prefix>` with `<variable_name>_<aggregate>` payload keys if
+**Flat telemetry topic** is enabled (ThingsBoard, AWS IoT, etc.)
 
 **SD card path**: `/data/sensors_YYYYMMDD.csv` and `/data/position_YYYYMMDD.csv`
 

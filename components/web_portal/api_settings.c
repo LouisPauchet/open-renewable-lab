@@ -44,6 +44,7 @@ static esp_err_t mqtt_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(o, "username", m.username);
     cJSON_AddBoolToObject(o, "password_set", strlen(m.password) > 0); /* password itself is write-only */
     cJSON_AddStringToObject(o, "topic_prefix", m.topic_prefix);
+    cJSON_AddBoolToObject(o, "flat_telemetry", m.flat_telemetry);
     cJSON_AddBoolToObject(o, "batch_enabled", m.batch_enabled);
     cJSON_AddNumberToObject(o, "batch_interval_ms", m.batch_interval_ms);
     return wp_send_json(req, o);
@@ -72,6 +73,7 @@ static esp_err_t mqtt_put_handler(httpd_req_t *req)
     json_str(body, "client_id", m.client_id, sizeof(m.client_id), current.client_id);
     json_str(body, "username", m.username, sizeof(m.username), current.username);
     json_str(body, "topic_prefix", m.topic_prefix, sizeof(m.topic_prefix), current.topic_prefix);
+    m.flat_telemetry = json_bool(body, "flat_telemetry", current.flat_telemetry);
     m.batch_enabled = json_bool(body, "batch_enabled", current.batch_enabled);
     m.batch_interval_ms = (uint32_t)json_int(body, "batch_interval_ms", (int)current.batch_interval_ms);
 

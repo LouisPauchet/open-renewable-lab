@@ -110,6 +110,7 @@ static void config_set_defaults(device_config_t *c)
     c->mqtt.enabled = false;
     c->mqtt.port = 1883;
     copy_str(c->mqtt.topic_prefix, sizeof(c->mqtt.topic_prefix), "walter");
+    c->mqtt.flat_telemetry = false;
     c->mqtt.batch_enabled = false;
     c->mqtt.batch_interval_ms = 30 * 60 * 1000; /* 30 min */
 
@@ -214,6 +215,7 @@ cJSON *config_store_to_json(const device_config_t *c)
     cJSON_AddStringToObject(mqtt, "username", c->mqtt.username);
     cJSON_AddStringToObject(mqtt, "password", c->mqtt.password);
     cJSON_AddStringToObject(mqtt, "topic_prefix", c->mqtt.topic_prefix);
+    cJSON_AddBoolToObject(mqtt, "flat_telemetry", c->mqtt.flat_telemetry);
     cJSON_AddBoolToObject(mqtt, "batch_enabled", c->mqtt.batch_enabled);
     cJSON_AddNumberToObject(mqtt, "batch_interval_ms", c->mqtt.batch_interval_ms);
 
@@ -258,6 +260,7 @@ bool config_store_from_json(const cJSON *root, device_config_t *c)
         json_get_str(mqtt, "username", c->mqtt.username, sizeof(c->mqtt.username), "");
         json_get_str(mqtt, "password", c->mqtt.password, sizeof(c->mqtt.password), "");
         json_get_str(mqtt, "topic_prefix", c->mqtt.topic_prefix, sizeof(c->mqtt.topic_prefix), "walter");
+        c->mqtt.flat_telemetry = json_get_bool(mqtt, "flat_telemetry", false);
         c->mqtt.batch_enabled = json_get_bool(mqtt, "batch_enabled", false);
         c->mqtt.batch_interval_ms = (uint32_t)json_get_int(mqtt, "batch_interval_ms", (int)c->mqtt.batch_interval_ms);
     }

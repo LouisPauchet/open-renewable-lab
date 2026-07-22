@@ -378,6 +378,7 @@ function mqttFormFields(m) {
     </div>
     <label>Password ${m.password_set ? "<small>(already set - leave blank to keep)</small>" : ""} <input type="password" name="password"></label>
     <label>Topic prefix <input name="topic_prefix" value="${m.topic_prefix}"></label>
+    <label><input type="checkbox" name="flat_telemetry" ${m.flat_telemetry ? "checked" : ""}> Flat telemetry topic (publish directly to "Topic prefix" with keys like "&lt;variable&gt;_mean" - for platforms like ThingsBoard/AWS IoT that expect a single fixed topic, instead of one topic per variable)</label>
     <label><input type="checkbox" name="batch_enabled" ${m.batch_enabled ? "checked" : ""}> Batch transmission (connect, send buffered data, disconnect - saves power, especially over cellular)</label>
     <label>Batch interval (ms) <input type="number" name="batch_interval_ms" value="${m.batch_interval_ms}"></label>
     <button type="submit">Save MQTT settings</button>
@@ -395,6 +396,7 @@ async function refreshMqtt() {
       enabled: !!fd.get("enabled"), host: fd.get("host"), port: parseInt(fd.get("port"), 10),
       use_tls: !!fd.get("use_tls"), tls_allow_insecure: !!fd.get("tls_allow_insecure"),
       client_id: fd.get("client_id"), username: fd.get("username"), topic_prefix: fd.get("topic_prefix"),
+      flat_telemetry: !!fd.get("flat_telemetry"),
       batch_enabled: !!fd.get("batch_enabled"), batch_interval_ms: parseInt(fd.get("batch_interval_ms"), 10),
     };
     if (fd.get("password")) body.password = fd.get("password");

@@ -23,15 +23,20 @@ extern "C" {
  * actually sent (connect -> drain buffer -> disconnect) once per
  * mqtt.batch_interval_ms, trading latency for radio-on time. When
  * false, the previous always-connected/immediate-publish behavior is
- * used. Either way, topics are "<topic_prefix>/<device_id>/<name>". */
+ * used. Either way, topics are "<topic_prefix>/<device_id>/<name>" -
+ * unless mqtt.flat_telemetry is set, in which case every publish goes
+ * to the literal topic_prefix with flat "<name>_<aggregate>" JSON keys
+ * (the shape platforms like ThingsBoard/AWS IoT expect from their one
+ * fixed device telemetry topic). */
 esp_err_t mqttc_init(void);
 
 bool mqttc_is_ready(void);
 
 /* Queues a GNSS fix for publish to "<topic_prefix>/<device_id>/position"
- * - respects the same batching behavior as regular sensor publishes.
- * Only the most recent pending fix is kept if called again before the
- * previous one is sent. */
+ * (or the literal topic_prefix under mqtt.flat_telemetry) - respects
+ * the same batching behavior as regular sensor publishes. Only the
+ * most recent pending fix is kept if called again before the previous
+ * one is sent. */
 esp_err_t mqttc_publish_position(const gnss_fix_t *fix);
 
 #ifdef __cplusplus
