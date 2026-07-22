@@ -70,6 +70,10 @@
   <form id="position-form"></form>
   <div class="msg" id="position-msg"></div>
 
+  <h2>Battery monitor</h2>
+  <form id="battery-form"></form>
+  <div class="msg" id="battery-msg"></div>
+
   <h2>Portal password</h2>
   <form id="password-form">
     <label>Current password <input type="password" id="pw-old" required></label>
@@ -178,6 +182,7 @@ function aggMaskToNames(mask) {
 }
 function variableFormFields(v) {
   v = v || { name: "", bus_type: 0, unit: "", sample_interval_ms: 60000, log_interval_ms: 300000, aggregate_mask: 1, enabled: true,
+             calibration_a: 1, calibration_b: 0,
              addr: { address: "0", parameter_index: 0, i2c_addr: 0, device_type: 0, channel_index: 0, gain: 1 } };
   return `
     <div class="row">
@@ -200,7 +205,13 @@ function variableFormFields(v) {
         <select name="i2c_device_type" id="i2c-device-type-select">
           <option value="0" ${(v.addr.device_type || 0) == 0 ? "selected" : ""}>ADS111x (16-bit ADC)</option>
           <option value="1" ${(v.addr.device_type || 0) == 1 ? "selected" : ""}>Generic (raw 16-bit register)</option>
+          <option value="2" ${(v.addr.device_type || 0) == 2 ? "selected" : ""}>Onboard HDC1080 - Temperature (addr 0x40)</option>
+          <option value="3" ${(v.addr.device_type || 0) == 3 ? "selected" : ""}>Onboard HDC1080 - Humidity (addr 0x40)</option>
+          <option value="4" ${(v.addr.device_type || 0) == 4 ? "selected" : ""}>Onboard LPS22HB - Pressure (addr 0x5C/0x5D)</option>
+          <option value="5" ${(v.addr.device_type || 0) == 5 ? "selected" : ""}>Onboard LPS22HB - Temperature (addr 0x5C/0x5D)</option>
+          <option value="6" ${(v.addr.device_type || 0) == 6 ? "selected" : ""}>Onboard LTC4015 - Battery monitor (addr 0x68)</option>
         </select>
+        <small>The "Onboard" options are Walter Feels' built-in sensors, wired to a separate internal I2C bus - not the external I2C connector.</small>
       </label></div>
     </div>
     <div class="row" data-i2c-mode="0">
@@ -231,6 +242,17 @@ function variableFormFields(v) {
     <div class="row" data-i2c-mode="1">
       <div><label>Register address <input type="number" name="i2c_channel_generic" value="${v.addr.channel_index || 0}"></label></div>
     </div>
+    <div class="row" data-i2c-mode="6">
+      <div><label>LTC4015 reading
+        <select name="i2c_channel_ltc4015">
+          <option value="0" ${(v.addr.channel_index || 0) == 0 ? "selected" : ""}>Battery voltage (VBAT)</option>
+          <option value="1" ${(v.addr.channel_index || 0) == 1 ? "selected" : ""}>Input voltage (VIN)</option>
+          <option value="2" ${(v.addr.channel_index || 0) == 2 ? "selected" : ""}>Battery current (IBAT)</option>
+          <option value="3" ${(v.addr.channel_index || 0) == 3 ? "selected" : ""}>Charger die temperature</option>
+        </select>
+        <small>Battery voltage uses the chemistry/cell count set under the "Battery monitor" section below. Battery current is positive when charging, negative when discharging.</small>
+      </label></div>
+    </div>
     <div class="row">
       <div><label>Sample interval (ms) <input type="number" name="sample_interval_ms" value="${v.sample_interval_ms}" required></label></div>
       <div><label>Log/aggregate interval (ms) <input type="number" name="log_interval_ms" value="${v.log_interval_ms}" required></label></div>
@@ -239,6 +261,11 @@ function variableFormFields(v) {
       ${AGG_BITS.map(([name, bit]) => `<label style="display:inline-block;width:auto;margin-right:.75rem">
         <input type="checkbox" name="agg_${name}" ${(v.aggregate_mask & bit) ? "checked" : ""}> ${name}</label>`).join("")}
     </label>
+    <div class="row">
+      <div><label>Calibration multiplier (a) <input type="number" step="any" name="calibration_a" value="${v.calibration_a ?? 1}"></label></div>
+      <div><label>Calibration offset (b) <input type="number" step="any" name="calibration_b" value="${v.calibration_b ?? 0}"></label></div>
+    </div>
+    <small>Applied to every raw sample before logging/aggregation: calibrated = a &times; raw + b. Defaults (a=1, b=0) leave the reading unchanged - e.g. for a voltage divider with a 1/11 ratio, set a to 11.</small>
     <label><input type="checkbox" name="enabled" ${v.enabled ? "checked" : ""}> Enabled</label>
     <button type="submit">Save</button>
     <button type="button" id="cancel-variable-btn">Cancel</button>
@@ -250,8 +277,8 @@ function readVariableForm(form) {
   for (const [name, bit] of AGG_BITS) if (fd.get("agg_" + name)) mask |= bit;
   const bus_type = parseInt(fd.get("bus_type"), 10);
   const device_type = parseInt(fd.get("i2c_device_type") || "0", 10);
-  const channel_index = device_type === 0
-    ? parseInt(fd.get("i2c_channel_ads111x") || "4", 10)
+  const channel_index = device_type === 0 ? parseInt(fd.get("i2c_channel_ads111x") || "4", 10)
+    : device_type === 6 ? parseInt(fd.get("i2c_channel_ltc4015") || "0", 10)
     : parseInt(fd.get("i2c_channel_generic") || "0", 10);
   const gain = parseInt(fd.get("i2c_gain_ads111x") || "1", 10);
   return {
@@ -263,6 +290,8 @@ function readVariableForm(form) {
     sample_interval_ms: parseInt(fd.get("sample_interval_ms"), 10),
     log_interval_ms: parseInt(fd.get("log_interval_ms"), 10),
     aggregate_mask: mask,
+    calibration_a: parseFloat(fd.get("calibration_a") || "1"),
+    calibration_b: parseFloat(fd.get("calibration_b") || "0"),
     enabled: !!fd.get("enabled"),
   };
 }
@@ -330,9 +359,15 @@ async function refreshVariables() {
   const tbody = $("#variables-table tbody");
   tbody.innerHTML = "";
   for (const v of vars) {
+    const ONBOARD_DEVICE_LABELS = {
+      2: "HDC1080 temp", 3: "HDC1080 humidity", 4: "LPS22HB pressure", 5: "LPS22HB temp",
+    };
+    const LTC4015_CHANNEL_LABELS = { 0: "VBAT", 1: "VIN", 2: "IBAT", 3: "die temp" };
     const i2cChannelLabel = v.addr.device_type === 0
       ? (ADS111X_CHANNEL_LABELS[v.addr.channel_index] || v.addr.channel_index) +
         " @ " + (ADS111X_GAIN_LABELS[v.addr.gain] || ADS111X_GAIN_LABELS[1])
+      : v.addr.device_type === 6 ? ("LTC4015 " + (LTC4015_CHANNEL_LABELS[v.addr.channel_index] || v.addr.channel_index))
+      : ONBOARD_DEVICE_LABELS[v.addr.device_type] ? ONBOARD_DEVICE_LABELS[v.addr.device_type]
       : ("reg " + v.addr.channel_index);
     const addr = v.bus_type === 0 ? ("addr " + v.addr.address + " #" + v.addr.parameter_index)
                                    : ("0x" + v.addr.i2c_addr.toString(16) + " " + i2cChannelLabel);
@@ -482,6 +517,39 @@ async function refreshPosition() {
   };
 }
 
+/* ---- Battery monitor (onboard LTC4015, Walter Feels only) ---- */
+function batteryFormFields(b) {
+  return `
+    <label>Battery chemistry
+      <select name="chemistry">
+        <option value="0" ${b.chemistry == 0 ? "selected" : ""}>Li-Ion / Li-Po</option>
+        <option value="1" ${b.chemistry == 1 ? "selected" : ""}>LiFePO4</option>
+        <option value="2" ${b.chemistry == 2 ? "selected" : ""}>Lead-acid</option>
+      </select>
+    </label>
+    <label>Cell count <input type="number" name="cell_count" min="1" value="${b.cell_count}"></label>
+    <button type="submit">Save battery settings</button>
+  `;
+}
+async function refreshBattery() {
+  let b;
+  try { b = await api("/api/settings/battery"); } catch { return; }
+  const form = $("#battery-form");
+  form.innerHTML = batteryFormFields(b);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const body = { chemistry: parseInt(fd.get("chemistry"), 10), cell_count: parseInt(fd.get("cell_count"), 10) };
+    try {
+      await api("/api/settings/battery", { method: "PUT", body });
+      $("#battery-msg").textContent = "Saved."; $("#battery-msg").className = "msg ok";
+      await refreshBattery();
+    } catch (err) {
+      $("#battery-msg").textContent = "Save failed: " + err.message; $("#battery-msg").className = "msg err";
+    }
+  };
+}
+
 /* ---- password ---- */
 $("#password-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -525,7 +593,7 @@ $("#reboot-btn").addEventListener("click", async () => {
 });
 
 async function refreshAll() {
-  await Promise.all([refreshStatus(), refreshVariables(), refreshMqtt(), refreshNetwork(), refreshPosition()]);
+  await Promise.all([refreshStatus(), refreshVariables(), refreshMqtt(), refreshNetwork(), refreshPosition(), refreshBattery()]);
 }
 setInterval(() => { if (!$("#app").classList.contains("hidden")) refreshStatus(); }, 5000);
 

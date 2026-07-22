@@ -54,6 +54,15 @@ typedef struct {
     uint32_t sample_interval_ms; /* how often a raw sample is taken */
     uint32_t log_interval_ms;    /* how often aggregates are flushed to SD/MQTT; must be >= sample_interval_ms */
     uint8_t aggregate_mask;      /* bitwise OR of aggregate_mask_t */
+
+    /* Linear calibration applied to every raw sample before it reaches
+     * the aggregator (so raw/mean/min/max/stddev all reflect the
+     * calibrated value): calibrated = calibration_a * raw + calibration_b.
+     * Defaults (1.0, 0.0) are a no-op. Typical use: correcting a voltage
+     * divider's ratio, or a two-point sensor calibration. */
+    double calibration_a;
+    double calibration_b;
+
     bool enabled;
 } variable_config_t;
 
@@ -109,6 +118,25 @@ typedef struct {
     uint32_t interval_ms; /* how often to acquire + log/publish a fix */
 } position_settings_t;
 
+typedef enum {
+    BATTERY_CHEM_LI_ION = 0,   /* also covers LiFePO4 - the LTC4015's VBAT ADC
+                                * front-end uses the same "lithium-based
+                                * chemistries" scale factor for both per its
+                                * datasheet; only lead-acid differs. */
+    BATTERY_CHEM_LIFEPO4 = 1,
+    BATTERY_CHEM_LEAD_ACID = 2,
+} battery_chemistry_t;
+
+typedef struct {
+    /* Onboard LTC4015 battery charger/monitor (Walter Feels only).
+     * chemistry/cell_count determine the VBAT register's voltage scale
+     * factor - set these to match your actual battery, they're a
+     * per-deployment choice, not a fixed board constant. See
+     * ltc4015.c for the scale-factor math and its sourcing. */
+    battery_chemistry_t chemistry;
+    uint8_t cell_count;
+} battery_settings_t;
+
 typedef struct {
     uint32_t schema_version;
 
@@ -118,6 +146,7 @@ typedef struct {
     net_settings_t net;
     mqtt_settings_t mqtt;
     position_settings_t position;
+    battery_settings_t battery;
 
     variable_config_t variables[MAX_VARIABLES];
     uint8_t variable_count;

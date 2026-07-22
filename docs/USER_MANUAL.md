@@ -179,15 +179,16 @@ Click **+ Add variable** under the Variables section. You'll be asked for:
 | Name | A short, unique label (e.g. `soil_temp_10cm`). This becomes the CSV column context and the MQTT topic segment for this variable, so keep it simple — letters, numbers, underscores. |
 | Unit | Free text, e.g. `degC`, `%RH`, `V`. This is just a label shown in the portal and not interpreted by the firmware — use whatever makes sense to you. |
 | Bus type | `SDI-12` or `I2C` — which physical bus the sensor is wired to. |
-| *(SDI-12 sensors)* Address | The sensor's SDI-12 address: a single character `0`-`9`, `A`-`Z`, or `a`-`z`. Most sensors ship set to `0`; see [6.4](#64-scanning-for-sensors) to find out what's actually on your bus. |
+| *(SDI-12 sensors)* Address | The sensor's SDI-12 address: a single character `0`-`9`, `A`-`Z`, or `a`-`z`. Most sensors ship set to `0`; see [6.2](#62-finding-your-sensors-address) to find out what's actually on your bus. |
 | *(SDI-12 sensors)* Parameter index | SDI-12 sensors often return several values in one reading (e.g. a soil probe might return moisture, temperature, and conductivity together). This is a zero-based index into that list: `0` for the first value, `1` for the second, etc. |
-| *(I2C sensors)* I2C address | The sensor's 7-bit I2C address, in decimal (e.g. `72` for the common `0x48`). |
-| *(I2C sensors)* Device type | Which built-in driver to use to talk to this chip. `ADS111x` = ADS1113/1114/1115 analog-to-digital converter (returns a voltage). `Generic` = a fallback that just reads a raw 16-bit register with no interpretation — use this if there's no dedicated driver yet for your sensor. |
+| *(I2C sensors)* I2C address | The sensor's 7-bit I2C address, in decimal (e.g. `72` for the common `0x48`). For the onboard sensor device types below, this defaults to that chip's fixed/typical address — see [6.5](#65-onboard-walter-feels-sensors-battery-temperature-humidity-pressure). |
+| *(I2C sensors)* Device type | Which built-in driver to use to talk to this chip: `ADS111x` (external ADC, returns a voltage), `Generic` (a fallback that just reads a raw 16-bit register with no interpretation), or one of the **onboard Walter Feels sensors** (battery monitor, temperature, humidity, pressure — see [6.5](#65-onboard-walter-feels-sensors-battery-temperature-humidity-pressure)). |
 | *(I2C sensors)* ADS111x input / Register address | For the ADC driver, a dropdown lets you pick which input to read: single-ended `AIN0`-`AIN3` (each measured against ground), or one of four **differential** pairs (`AIN0-AIN1`, `AIN0-AIN3`, `AIN1-AIN3`, `AIN2-AIN3` — the difference between the two inputs, useful for sensors like load cells/bridges/differential pressure that output a small voltage difference rather than a single-ended signal). For the generic driver, this field is instead a plain register address to read. |
 | *(I2C sensors)* ADS111x gain / full-scale range | Only for the ADC driver: the input range the reading is scaled against, from `+/-6.144V` down to `+/-0.256V`. Pick the smallest range that still comfortably covers your signal's expected peak, for the best resolution — e.g. `+/-2.048V` for a 0–1.5V signal, `+/-6.144V` for a 0–5V signal. This does **not** change the chip's absolute maximum input voltage, which is always its own supply voltage + 0.3V regardless of gain — a 0–5V signal needs the ADS1115 itself powered from 5V, not 3.3V. |
 | Sample interval (ms) | How often the sensor is physically read, in milliseconds. Default: 60000 (once a minute). |
 | Log/aggregate interval (ms) | How often a summary of the recent samples is written to SD/MQTT, in milliseconds. Must be **greater than or equal to** the sample interval. Default: 300000 (every 5 minutes). |
 | Aggregates | Which statistics to compute and report over each log interval — see [6.3](#63-understanding-sampling-vs-logging-vs-aggregation). |
+| Calibration multiplier (a) / offset (b) | Applied to every raw reading before logging/aggregation: `calibrated = a × raw + b`. Defaults (`a=1`, `b=0`) leave readings unchanged — see [6.6](#66-calibrating-a-variable-ax--b). |
 | Enabled | Untick to keep the configuration saved but pause this variable without deleting it. |
 
 ### 6.2 Finding your sensor's address
@@ -231,7 +232,49 @@ now and see the result immediately, without waiting for its next scheduled
 sample. Use this to confirm a sensor is wired correctly and returning
 sensible values before you leave it to log unattended.
 
-### 6.5 Editing and deleting variables
+### 6.5 Onboard Walter Feels sensors (battery, temperature, humidity, pressure)
+
+The Walter Feels carrier board itself has built-in sensors, wired to a
+separate internal I2C bus (not the external I2C connector, and not
+affected by the "Scan I2C bus" button, since their addresses are
+already known). To use one, add a variable with bus type `I2C` and pick
+one of these device types:
+
+| Device type | Reads | Typical I2C address |
+|---|---|---|
+| Onboard HDC1080 - Temperature | Board temperature (°C) | `64` (`0x40`) |
+| Onboard HDC1080 - Humidity | Board relative humidity (%RH) | `64` (`0x40`) |
+| Onboard LPS22HB - Pressure | Barometric pressure (hPa) | `92` (`0x5C`) or `93` (`0x5D`) |
+| Onboard LPS22HB - Temperature | A second temperature reading, from the pressure sensor | `92` (`0x5C`) or `93` (`0x5D`) |
+| Onboard LTC4015 - Battery monitor | Battery voltage, input voltage, battery current, or charger temperature (pick one via the "LTC4015 reading" dropdown) | `104` (`0x68`) |
+
+For the battery monitor's **voltage** reading specifically, set your
+battery's chemistry and cell count under the **Battery monitor** section
+of the settings page — this isn't a fixed board setting, since different
+stations may use different batteries (Li-Ion, LiFePO4, or lead-acid).
+Getting this wrong won't damage anything, but will scale the reported
+voltage incorrectly.
+
+### 6.6 Calibrating a variable (a·x + b)
+
+Every variable has a **calibration multiplier (a)** and **calibration
+offset (b)**, applied to every raw reading before it's logged or
+aggregated: `calibrated = a × raw + b`. The defaults (`a=1`, `b=0`) leave
+readings unchanged.
+
+The most common use is correcting a voltage divider: if you're measuring
+a voltage through a divider that scales it down by some ratio before it
+reaches the ADC, set `a` to the divider's inverse ratio to recover the
+original voltage. For example, a divider built from a 10 kΩ and 1 kΩ
+resistor (ratio 1/11) needs `a = 11` so a divided reading of 0.4 V is
+reported as the true 4.4 V.
+
+It's also useful for a simple two-point sensor calibration: if a sensor
+reads 0.2 when the true value is 0 and 10.4 when the true value is 10,
+solve for `a` and `b` from those two points (`a ≈ 0.98`, `b ≈ -0.196`) and
+enter them here.
+
+### 6.7 Editing and deleting variables
 
 Use **Edit** to change any field of an existing variable, or **Delete** to
 remove it entirely (this does not delete already-logged data).

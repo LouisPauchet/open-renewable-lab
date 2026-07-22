@@ -15,6 +15,7 @@
 #include "i2c_sensor_registry.h"
 #include "mqtt_client_bridge.h"
 #include "net_manager.h"
+#include "onboard_i2c_bus.h"
 #include "sampling_engine.h"
 #include "sd_logger.h"
 #include "sdi12_bus.h"
@@ -73,6 +74,14 @@ void app_main(void)
     } else {
         ESP_LOGW(TAG, "I2C bus unavailable (board_pins.h I2C pins not configured), using stub sensor");
         sampling_engine_register_bus_driver(BUS_TYPE_I2C, stub_sensor_read);
+    }
+    /* Separate physical bus from the one above (Walter Feels' onboard
+     * HDC1080/LPS22HB sensors) - i2c_variable_read() already routes to
+     * whichever bus a given I2C device_type actually lives on, so no
+     * separate BUS_TYPE/driver registration is needed here, just init. */
+    if (onboard_i2c_bus_init() != ESP_OK) {
+        ESP_LOGW(TAG, "onboard sensor I2C bus unavailable (board_pins.h pins not configured) - "
+                      "HDC1080/LPS22HB variables will fail to read");
     }
     ESP_ERROR_CHECK(sampling_engine_init());
 

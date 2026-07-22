@@ -107,8 +107,10 @@ open_renewable_lab/
     ├── sampling_engine/    # per-bus scheduling + Welford aggregation
     ├── stub_sensor/        # synthetic sensor source for testing w/o hardware
     ├── sdi12_bus/          # bit-banged SDI-12 physical layer + protocol
-    ├── i2c_bus/            # driver/i2c_master.h wrapper
-    ├── i2c_sensors/        # per-device-type driver registry (ADS111x, ...)
+    ├── i2c_bus/            # driver/i2c_master.h wrapper (external I2C connector)
+    ├── onboard_i2c_bus/    # second, separate driver/i2c_master.h wrapper (Walter Feels'
+    │                       # onboard HDC1080/LPS22HB sensor bus - distinct physical bus/pins)
+    ├── i2c_sensors/        # per-device-type driver registry (ADS111x, HDC1080, LPS22HB, LTC4015, ...)
     ├── sd_logger/          # SDMMC mount + CSV writer
     ├── net_manager/        # WiFi AP+STA, always-on-AP policy
     ├── time_sync/          # SNTP client, shared "is time synced" definition
@@ -812,13 +814,18 @@ Variable JSON shape (`config_store_variable_to_json`/`_from_json`):
   "id": 1, "name": "soil_temp", "bus_type": 0,
   "addr": {"address": "0", "parameter_index": 0},
   "unit": "degC", "sample_interval_ms": 60000, "log_interval_ms": 300000,
-  "aggregate_mask": 3, "enabled": true
+  "aggregate_mask": 3, "calibration_a": 1.0, "calibration_b": 0.0, "enabled": true
 }
 ```
 
 `bus_type`: `0` = SDI-12 (`addr` = `{address, parameter_index}`), `1` = I2C
-(`addr` = `{i2c_addr, device_type, channel_index}`). `aggregate_mask` is a
+(`addr` = `{i2c_addr, device_type, channel_index, gain}` - `gain` only
+meaningful for `device_type` `I2C_DEVICE_TYPE_ADS111X`). `aggregate_mask` is a
 bitmask: `RAW=1, MEAN=2, MIN=4, MAX=8, STDDEV=16` — e.g. `3` = raw + mean.
+`calibration_a`/`calibration_b` apply `calibrated = a * raw + b` to every
+sample before it reaches the aggregator (see `sampling_engine.c`'s
+`bus_scheduler_task` and `sampling_engine_read_once`) - defaults `(1.0, 0.0)`
+are a no-op.
 
 ### 17.5 Status response fields
 

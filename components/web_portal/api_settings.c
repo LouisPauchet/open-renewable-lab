@@ -238,6 +238,52 @@ static esp_err_t position_put_handler(httpd_req_t *req)
     return wp_send_json(req, resp);
 }
 
+/* ---- Battery monitor (onboard LTC4015, Walter Feels only) settings ---- */
+
+static esp_err_t battery_get_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    battery_settings_t b;
+    config_store_get_battery_settings(&b);
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddNumberToObject(o, "chemistry", b.chemistry);
+    cJSON_AddNumberToObject(o, "cell_count", b.cell_count);
+    return wp_send_json(req, o);
+}
+
+static esp_err_t battery_put_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    cJSON *body;
+    if (wp_read_json_body(req, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+
+    battery_settings_t current;
+    config_store_get_battery_settings(&current);
+
+    battery_settings_t b = current;
+    b.chemistry = (battery_chemistry_t)json_int(body, "chemistry", current.chemistry);
+    b.cell_count = (uint8_t)json_int(body, "cell_count", current.cell_count);
+    cJSON_Delete(body);
+
+    if (b.cell_count == 0) {
+        return wp_send_error(req, "400 Bad Request", "cell_count must be > 0");
+    }
+
+    config_store_set_battery_settings(&b);
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddBoolToObject(resp, "ok", true);
+    return wp_send_json(req, resp);
+}
+
 /* ---- Portal password ---- */
 
 static esp_err_t password_put_handler(httpd_req_t *req)
@@ -393,6 +439,11 @@ void api_settings_register_routes(httpd_handle_t server)
     u = (httpd_uri_t){ .uri = "/api/settings/position", .method = HTTP_GET, .handler = position_get_handler };
     httpd_register_uri_handler(server, &u);
     u = (httpd_uri_t){ .uri = "/api/settings/position", .method = HTTP_PUT, .handler = position_put_handler };
+    httpd_register_uri_handler(server, &u);
+
+    u = (httpd_uri_t){ .uri = "/api/settings/battery", .method = HTTP_GET, .handler = battery_get_handler };
+    httpd_register_uri_handler(server, &u);
+    u = (httpd_uri_t){ .uri = "/api/settings/battery", .method = HTTP_PUT, .handler = battery_put_handler };
     httpd_register_uri_handler(server, &u);
 
     u = (httpd_uri_t){ .uri = "/api/settings/password", .method = HTTP_PUT, .handler = password_put_handler };

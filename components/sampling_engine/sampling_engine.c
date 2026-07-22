@@ -144,6 +144,7 @@ static void bus_scheduler_task(void *pvParams)
                          (unsigned)var->id, esp_err_to_name(err));
                 continue;
             }
+            value = var->calibration_a * value + var->calibration_b;
 
             sample_msg_t msg = {
                 .variable_id = var->id,
@@ -348,5 +349,9 @@ esp_err_t sampling_engine_read_once(uint16_t variable_id, double *out_value)
         return ESP_ERR_INVALID_STATE;
     }
 
-    return read_fn(&var, out_value);
+    esp_err_t err = read_fn(&var, out_value);
+    if (err == ESP_OK) {
+        *out_value = var.calibration_a * (*out_value) + var.calibration_b;
+    }
+    return err;
 }

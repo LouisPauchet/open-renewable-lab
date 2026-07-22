@@ -84,6 +84,12 @@ static int json_get_int(const cJSON *obj, const char *key, int def)
     return (j && cJSON_IsNumber(j)) ? (int)j->valuedouble : def;
 }
 
+static double json_get_double(const cJSON *obj, const char *key, double def)
+{
+    const cJSON *j = cJSON_GetObjectItemCaseSensitive(obj, key);
+    return (j && cJSON_IsNumber(j)) ? j->valuedouble : def;
+}
+
 static bool json_get_bool(const cJSON *obj, const char *key, bool def)
 {
     const cJSON *j = cJSON_GetObjectItemCaseSensitive(obj, key);
@@ -116,6 +122,9 @@ static void config_set_defaults(device_config_t *c)
 
     c->position.enabled = false;
     c->position.interval_ms = 10 * 60 * 1000; /* 10 min */
+
+    c->battery.chemistry = BATTERY_CHEM_LI_ION;
+    c->battery.cell_count = 1;
 
     c->variable_count = 0;
     c->generation = 0;
@@ -159,6 +168,8 @@ cJSON *config_store_variable_to_json(const variable_config_t *v)
     cJSON_AddNumberToObject(o, "sample_interval_ms", v->sample_interval_ms);
     cJSON_AddNumberToObject(o, "log_interval_ms", v->log_interval_ms);
     cJSON_AddNumberToObject(o, "aggregate_mask", v->aggregate_mask);
+    cJSON_AddNumberToObject(o, "calibration_a", v->calibration_a);
+    cJSON_AddNumberToObject(o, "calibration_b", v->calibration_b);
     cJSON_AddBoolToObject(o, "enabled", v->enabled);
     return o;
 }
@@ -188,6 +199,8 @@ bool config_store_variable_from_json(const cJSON *o, variable_config_t *v)
     v->sample_interval_ms = (uint32_t)json_get_int(o, "sample_interval_ms", 60000);
     v->log_interval_ms = (uint32_t)json_get_int(o, "log_interval_ms", 300000);
     v->aggregate_mask = (uint8_t)json_get_int(o, "aggregate_mask", AGG_RAW) & AGG_ALL_VALID_BITS;
+    v->calibration_a = json_get_double(o, "calibration_a", 1.0);
+    v->calibration_b = json_get_double(o, "calibration_b", 0.0);
     v->enabled = json_get_bool(o, "enabled", true);
     return true;
 }
@@ -222,6 +235,10 @@ cJSON *config_store_to_json(const device_config_t *c)
     cJSON *position = cJSON_AddObjectToObject(root, "position");
     cJSON_AddBoolToObject(position, "enabled", c->position.enabled);
     cJSON_AddNumberToObject(position, "interval_ms", c->position.interval_ms);
+
+    cJSON *battery = cJSON_AddObjectToObject(root, "battery");
+    cJSON_AddNumberToObject(battery, "chemistry", c->battery.chemistry);
+    cJSON_AddNumberToObject(battery, "cell_count", c->battery.cell_count);
 
     cJSON *vars = cJSON_AddArrayToObject(root, "variables");
     for (uint8_t i = 0; i < c->variable_count; i++) {
@@ -269,6 +286,12 @@ bool config_store_from_json(const cJSON *root, device_config_t *c)
     if (position) {
         c->position.enabled = json_get_bool(position, "enabled", false);
         c->position.interval_ms = (uint32_t)json_get_int(position, "interval_ms", (int)c->position.interval_ms);
+    }
+
+    const cJSON *battery = cJSON_GetObjectItemCaseSensitive(root, "battery");
+    if (battery) {
+        c->battery.chemistry = (battery_chemistry_t)json_get_int(battery, "chemistry", c->battery.chemistry);
+        c->battery.cell_count = (uint8_t)json_get_int(battery, "cell_count", c->battery.cell_count);
     }
 
     const cJSON *vars = cJSON_GetObjectItemCaseSensitive(root, "variables");
@@ -623,6 +646,26 @@ esp_err_t config_store_set_position_settings(const position_settings_t *settings
     }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_config.position = *settings;
+    s_config.generation++;
+    esp_err_t err = save_locked();
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
+void config_store_get_battery_settings(battery_settings_t *out)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    *out = s_config.battery;
+    xSemaphoreGive(s_mutex);
+}
+
+esp_err_t config_store_set_battery_settings(const battery_settings_t *settings)
+{
+    if (!settings) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_config.battery = *settings;
     s_config.generation++;
     esp_err_t err = save_locked();
     xSemaphoreGive(s_mutex);

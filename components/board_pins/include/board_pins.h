@@ -81,6 +81,15 @@
 #define BOARD_PIN_STATUS_LED BOARD_PIN_NOT_SET /* many DevKit V1 clones have an onboard LED on GPIO2, but not universally - verify before wiring logic to it */
 #define BOARD_PIN_FORCE_AP_BUTTON BOARD_PIN_NOT_SET
 
+/* No onboard HDC1080/LPS22HB/LTC4015 on a plain DevKit - onboard_i2c_bus_init()
+ * fails gracefully (logged, non-fatal) without these pins set, same as
+ * every other optional subsystem on this board variant. */
+#define BOARD_ONBOARD_I2C_PORT (-1)
+#define BOARD_PIN_ONBOARD_I2C_SDA BOARD_PIN_NOT_SET
+#define BOARD_PIN_ONBOARD_I2C_SCL BOARD_PIN_NOT_SET
+#define BOARD_PIN_ONBOARD_I2C_EN BOARD_PIN_NOT_SET
+#define BOARD_ONBOARD_I2C_CLOCK_HZ 100000
+
 #else /* BOARD_VARIANT_WALTER_FEELS (default) */
 
 /* ---- SDI-12 bus ----
@@ -128,14 +137,22 @@
 #define BOARD_PIN_STATUS_LED      BOARD_PIN_NOT_SET /* TODO: optional; GPIOA (IO39) / GPIOB (IO38) are spare header pins if wiring one up */
 #define BOARD_PIN_FORCE_AP_BUTTON BOARD_PIN_NOT_SET /* TODO: optional; extension point for net_manager_force_ap_on() */
 
-/*
- * Onboard peripherals documented for reference, not GPIO-mapped here
- * since they live on BOARD_I2C_PORT rather than needing dedicated
- * GPIOs: LTC4015 battery charger/monitor (typ. I2C addr 0x68), and a
- * separate onboard I2C bus (CO2_SDA=IO12/CO2_SCL=IO11/CO2_EN=IO13) for
- * the optional SCD30 CO2 sensor + onboard temp/humidity/pressure/IMU -
- * none wired into firmware, out of scope for v1.
- */
+/* ---- Onboard peripherals ----
+ * LTC4015 battery charger/monitor lives on BOARD_I2C_PORT above (the
+ * same external-connector bus), fixed I2C addr 0x68 - no dedicated
+ * GPIOs needed, see i2c_sensors/ltc4015.c.
+ *
+ * The onboard HDC1080 (temp/humidity, fixed addr 0x40) and LPS22HB
+ * (pressure/temp, addr 0x5C or 0x5D depending on SA0 strapping) sit on
+ * a second, electrically separate I2C bus with its own dedicated GPIOs
+ * - not the external connector. CO2_EN gates power to this bus
+ * segment (also used by the optional SCD30 CO2 sensor and the
+ * LSM6DSM IMU, neither wired into firmware - out of scope for v1). */
+#define BOARD_ONBOARD_I2C_PORT      (-1) /* -1 = let the I2C driver auto-assign a free port */
+#define BOARD_PIN_ONBOARD_I2C_SDA   GPIO_NUM_12 /* CO2_SDA */
+#define BOARD_PIN_ONBOARD_I2C_SCL   GPIO_NUM_11 /* CO2_SCL */
+#define BOARD_PIN_ONBOARD_I2C_EN    GPIO_NUM_13 /* CO2_EN - active level not confirmed from the schematic; onboard_i2c_bus_init() drives it HIGH, verify with a meter if these sensors don't respond */
+#define BOARD_ONBOARD_I2C_CLOCK_HZ  100000
 
 #endif /* BOARD_VARIANT */
 
