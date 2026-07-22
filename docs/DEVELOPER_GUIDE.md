@@ -915,20 +915,22 @@ idf.py -p <PORT> flash monitor
 ```
 
 Wiring, for two ADS1115 boards sharing the bus (I2C requires each device
-on a bus to have a distinct address — this is exactly what the `ADDR` pin
-on an ADS1115 breakout is for):
+on a bus to have a distinct address):
 
 - Both boards: `SDA` → GPIO21, `SCL` → GPIO22, `VDD`/`GND` → the DevKit's
   3.3V/GND (see `BOARD_PIN_I2C_SDA`/`BOARD_PIN_I2C_SCL` in `board_pins.h`
   for this variant).
-- Give each board a distinct address by tying its `ADDR` pin
-  differently. The four standard options (per the ADS1115 datasheet)
-  are `GND`→`0x48`, `VDD`→`0x49`, `SDA`→`0x4A`, `SCL`→`0x4B` — confirm
-  what your specific boards actually respond at with the portal's
-  **Scan I2C bus** button rather than assuming (`0x39` isn't one of
-  the four standard options, so if you see something like that, it's
-  worth double-checking wiring/breakout documentation rather than
-  treating it as routine).
+- Give each board a distinct address. On the generic ADS1115 chip
+  (TI datasheet), this is done by tying the `ADDR` pin to `GND`→`0x48`,
+  `VDD`→`0x49`, `SDA`→`0x4A`, or `SCL`→`0x4B`. Some breakout boards
+  instead use their own onboard solder jumpers with a different
+  mapping - e.g. Soldered's ADS1115 breakout defaults to `0x48` with no
+  jumper closed, and remaps to `0x39`/`0x4A`/`0x4B` via jumpers JP3/JP4/JP5
+  respectively (**close only one jumper at a time** - the board's own
+  docs warn that closing more than one simultaneously can cause a
+  malfunction). Either way, confirm what your specific boards actually
+  respond at with the portal's **Scan I2C bus** button rather than
+  assuming.
 
 Then in the portal, add one variable per ADC input you want to read: bus
 type I2C, the I2C address you found via the scan (in decimal — e.g. `72`
