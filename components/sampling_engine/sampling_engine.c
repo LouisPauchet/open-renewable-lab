@@ -1,5 +1,6 @@
 #include "sampling_engine.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -72,11 +73,18 @@ static void bus_scheduler_task(void *pvParams)
     bus_type_t bus_type = (bus_type_t)(intptr_t)pvParams;
     const char *bus_name = (bus_type == BUS_TYPE_SDI12) ? "sdi12" : "i2c";
 
-    sched_entry_t sched[MAX_VARIABLES];
-    memset(sched, 0, sizeof(sched));
+    /* MAX_VARIABLES=32 makes these full-struct arrays too large to keep
+     * as locals on this task's stack (two concurrent instances of this
+     * task run - one per bus type - so they can't be `static` without
+     * the two racing on shared storage); heap-allocate once instead. */
+    sched_entry_t *sched = calloc(MAX_VARIABLES, sizeof(sched_entry_t));
+    variable_config_t *vars = calloc(MAX_VARIABLES, sizeof(variable_config_t));
+    if (!sched || !vars) {
+        ESP_LOGE(TAG, "%s scheduler: out of memory allocating schedule tables", bus_name);
+        vTaskDelete(NULL);
+        return;
+    }
     uint32_t last_generation = UINT32_MAX;
-
-    variable_config_t vars[MAX_VARIABLES];
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(SCHEDULER_TICK_MS));
@@ -88,7 +96,7 @@ static void bus_scheduler_task(void *pvParams)
         if (generation != last_generation) {
             /* Config changed: rebuild the schedule from scratch. Newly
              * added/changed variables sample immediately. */
-            memset(sched, 0, sizeof(sched));
+            memset(sched, 0, MAX_VARIABLES * sizeof(sched_entry_t));
             size_t n = 0;
             for (size_t i = 0; i < count && n < MAX_VARIABLES; i++) {
                 if (vars[i].bus_type == bus_type) {
@@ -165,11 +173,14 @@ static agg_entry_t *find_agg_entry(uint16_t variable_id)
 
 static void rebuild_agg_table(void)
 {
-    variable_config_t vars[MAX_VARIABLES];
+    /* MAX_VARIABLES=32 full-struct arrays are too large for aggregation_task's
+     * stack; `static` is safe here since rebuild_agg_table only ever runs
+     * serially from that single task (no concurrent callers). */
+    static variable_config_t vars[MAX_VARIABLES];
     size_t count = config_store_get_variables(vars, MAX_VARIABLES);
     int64_t now_us = esp_timer_get_time();
 
-    agg_entry_t new_table[MAX_VARIABLES];
+    static agg_entry_t new_table[MAX_VARIABLES];
     memset(new_table, 0, sizeof(new_table));
     size_t n = 0;
 

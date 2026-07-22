@@ -29,5 +29,17 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_LWIP_SNTP_MAX_SERVERS=1
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 
-# cJSON is used by config_store for the NVS-backed config blob.
-CONFIG_JSON_USING_DOUBLE_PRECISION=y
+# cJSON (via the espressif/cjson managed component - no longer bundled
+# in-tree as a "json" component in this ESP-IDF version) is used by
+# config_store for the NVS-backed config blob, and throughout the REST
+# API/MQTT payloads. Its own Kconfig (CJSON_NESTING_LIMIT/
+# CJSON_CIRCULAR_LIMIT) defaults are fine as-is.
+
+# The ESP-IDF default (3584B) overflows during app_main()'s synchronous
+# init - PSA Crypto's driver-dispatch call chain (used by config_store's
+# password hashing, see hash_with_salt()) is noticeably deeper than the
+# legacy mbedtls_sha256_* API it replaced, and app_main also does
+# WiFi/HTTP-server/cJSON work before any of that init hands off to its
+# own task. Confirmed via a real stack-overflow panic in task "main" on
+# first hardware boot.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
