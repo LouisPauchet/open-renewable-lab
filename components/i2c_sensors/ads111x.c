@@ -23,6 +23,18 @@
  * absolute maximum *input pin* voltage is VDD+0.3V regardless of PGA
  * setting, so a larger FSR does not make it safe to feed in a signal
  * that exceeds the chip's own supply voltage.
+ *
+ * One "sample" is actually an average of ADS111X_SAMPLES_PER_AVERAGE
+ * independent single-shot conversions spread over
+ * ADS111X_AVERAGING_WINDOW_MS (100ms): a boxcar average of length T has
+ * spectral nulls at every multiple of 1/T, so 100ms nulls both 50Hz
+ * and 60Hz mains ripple simultaneously (the same line-cycle-rejection
+ * trick precision multimeters use), and generally attenuates anything
+ * above ~10Hz that would otherwise alias into sample_interval_ms-
+ * spaced single-shot readings. This assumes the signal itself varies
+ * slowly relative to 100ms (true for the sensors this firmware
+ * targets - panel voltage, pyranometer irradiance, etc.) - it is not
+ * appropriate for a variable meant to capture fast transients.
  */
 
 #include "freertos/FreeRTOS.h"
@@ -35,18 +47,15 @@
 
 #define ADS111X_CONVERSION_DELAY_MS 10 /* 128SPS ~7.8ms, padded for margin */
 
+#define ADS111X_AVERAGING_WINDOW_MS 100
+#define ADS111X_SAMPLES_PER_AVERAGE (ADS111X_AVERAGING_WINDOW_MS / ADS111X_CONVERSION_DELAY_MS)
+
 static const double ADS111X_FSR_VOLTS_BY_GAIN[8] = {
     6.144, 4.096, 2.048, 1.024, 0.512, 0.256, 0.256, 0.256,
 };
 
-esp_err_t ads111x_read_channel(uint8_t i2c_addr, uint8_t channel, uint8_t gain, double *out_value)
+static esp_err_t ads111x_read_once(uint8_t i2c_addr, uint16_t mux, uint16_t pga, double *out_value)
 {
-    if (!out_value) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    uint16_t mux = (uint16_t)(channel & 0x7);  /* direct MUX select - see file header table */
-    uint16_t pga = (uint16_t)(gain & 0x7);     /* direct PGA select - see file header table */
     uint16_t config = 0x8000u        /* OS: start single conversion */
                        | (mux << 12) /* MUX */
                        | (pga << 9)  /* PGA */
@@ -71,5 +80,28 @@ esp_err_t ads111x_read_channel(uint8_t i2c_addr, uint8_t channel, uint8_t gain, 
 
     int16_t raw = (int16_t)((read_buf[0] << 8) | read_buf[1]);
     *out_value = ((double)raw / 32768.0) * ADS111X_FSR_VOLTS_BY_GAIN[pga];
+    return ESP_OK;
+}
+
+esp_err_t ads111x_read_channel(uint8_t i2c_addr, uint8_t channel, uint8_t gain, double *out_value)
+{
+    if (!out_value) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint16_t mux = (uint16_t)(channel & 0x7); /* direct MUX select - see file header table */
+    uint16_t pga = (uint16_t)(gain & 0x7);    /* direct PGA select - see file header table */
+
+    double sum = 0.0;
+    for (int i = 0; i < ADS111X_SAMPLES_PER_AVERAGE; i++) {
+        double value;
+        esp_err_t err = ads111x_read_once(i2c_addr, mux, pga, &value);
+        if (err != ESP_OK) {
+            return err;
+        }
+        sum += value;
+    }
+
+    *out_value = sum / ADS111X_SAMPLES_PER_AVERAGE;
     return ESP_OK;
 }
