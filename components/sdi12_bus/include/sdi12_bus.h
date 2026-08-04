@@ -2,24 +2,28 @@
 
 /*
  * Bit-banged SDI-12 driver, per SDI-12 v1.4: 1200 baud, 7 data bits,
- * ODD parity, 1 stop bit, inverted mark/space polarity vs. standard
- * UART. Matches Walter Feels' actual topology (confirmed from
- * schematic): separate TXD/RXD GPIOs through two SN74LV1T126 tri-state
- * buffers (BOARD_PIN_SDI12_TXD/RXD), each gated by its own enable pin
- * (BOARD_PIN_SDI12_TX_EN/RX_EN) - not a single shared bidirectional
- * line. SER_TX/SER_RX are also muxed with RS485/RS232 transceivers on
- * this board; sdi12_bus_init() holds those disabled.
+ * EVEN parity, 1 stop bit (confirmed against the spec and multiple
+ * independent implementations - EnviroDIY/Arduino-SDI-12,
+ * ESPSoftwareSerial-based drivers using SWSERIAL_7E1), inverted
+ * mark/space polarity vs. standard UART. Matches Walter Feels' actual
+ * topology (confirmed from schematic): separate TXD/RXD GPIOs through
+ * two SN74LV1T126 tri-state buffers (BOARD_PIN_SDI12_TXD/RXD), each
+ * gated by its own enable pin (BOARD_PIN_SDI12_TX_EN/RX_EN) - not a
+ * single shared bidirectional line. SER_TX/SER_RX are also muxed with
+ * RS485/RS232 transceivers on this board; sdi12_bus_init() holds those
+ * disabled.
  *
- * Real hardware bring-up so far: the parity was originally coded as
- * EVEN (a real bug, now fixed - SDI-12 sensors silently ignore
- * characters with a parity error, indistinguishable from "nothing
- * connected"). Idle-state DATA line voltage measured with a meter
- * matches the marking=LOW assumption at both the board connector and
- * the sensor itself, confirming continuity and idle polarity - but a
- * known-good sensor still doesn't respond to a scan even with the
- * parity fix, so the SN74LV1T126 enable-pin polarity
- * (BOARD_PIN_SDI12_TX_EN/RX_EN) and/or a TXD/RXD pin swap are still
- * open questions; see sdi12_bus_debug_tx_toggle_test() below.
+ * Real hardware bring-up so far, on two separate Walter Feels boards:
+ * TX_EN/TXD genuinely reaches the bus (confirmed by multimeter, 0-5V
+ * swing, via sdi12_bus_debug_tx_toggle_test() below) and RX_EN sits at
+ * the expected enabled level - but the receive path is dead on both
+ * boards: a loopback edge-count of our own TX transitions on RXD reads
+ * 0, and a direct meter reading on the RXD GPIO pin itself shows no
+ * voltage change at all despite the bus swinging. That isolates the
+ * fault to the RX_EN-to-U6-OE or U6-output-to-RXD physical connection
+ * (a schematic/PCB-trace question), not firmware - parity, TX_EN
+ * polarity, and TXD/RXD pin order are all independently confirmed
+ * correct at this point.
  *
  * The bus is intended to be called from a single task at a time
  * (sampling_engine's SDI-12 scheduler task in normal operation); an
