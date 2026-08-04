@@ -211,13 +211,22 @@ esp_err_t sdi12_bus_init(void)
     }
 
     /* SER_TX/SER_RX are shared with RS485/RS232 transceivers on this
-     * board - hold their enables low so they don't contend with the
-     * SDI-12 buffers on the same lines. */
+     * board - confirmed with DPTechnics support (Daan) that *_TX_EN
+     * must be LOW and *_RX_EN must be HIGH to fully disable each
+     * transceiver. This was previously (incorrectly) assumed to be
+     * LOW for both - RS485/RS232's RX_EN pins are evidently active-low
+     * receiver-enables (a common RS-485 transceiver DE/~RE pattern),
+     * not simple active-high output-enables like SDI-12's own RX_EN.
+     * Leaving them LOW left both other transceivers' receivers
+     * actively driving the shared SER_RXD line, contending with
+     * SDI-12's own U6 output - the real cause of RXD never seeing a
+     * coherent signal despite every other link in the SDI-12 receive
+     * chain checking out individually. */
     err = init_output_pin(BOARD_PIN_RS485_TX_EN, 0);
     if (err != ESP_OK) {
         return err;
     }
-    err = init_output_pin(BOARD_PIN_RS485_RX_EN, 0);
+    err = init_output_pin(BOARD_PIN_RS485_RX_EN, 1);
     if (err != ESP_OK) {
         return err;
     }
@@ -225,7 +234,7 @@ esp_err_t sdi12_bus_init(void)
     if (err != ESP_OK) {
         return err;
     }
-    err = init_output_pin(BOARD_PIN_RS232_RX_EN, 0);
+    err = init_output_pin(BOARD_PIN_RS232_RX_EN, 1);
     if (err != ESP_OK) {
         return err;
     }

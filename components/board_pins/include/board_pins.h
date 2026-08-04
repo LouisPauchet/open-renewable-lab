@@ -102,9 +102,9 @@
  * put SDI-12 on a shared UART-style bus (SER_TX/SER_RX) that's also
  * muxed with RS485 and RS232 transceivers via their own *_EN pins.
  * SDI-12's TX/RX enable pins are ACTIVE HIGH (SN74LV1T126 has a fixed
- * active-high OE, unlike the active-low '125 variant) - not
- * independently confirmed from the schematic image, but it's the only
- * OE polarity this specific part supports.
+ * active-high OE, unlike the active-low '125 variant) - confirmed on
+ * real hardware (TX_EN=1 measurably drives the bus; RX_EN's own
+ * active level confirmed via DPTechnics support, see below).
  */
 #define BOARD_PIN_SDI12_TXD    GPIO_NUM_40 /* SER_TX - MCU output, through U5 to the bus */
 #define BOARD_PIN_SDI12_RXD    GPIO_NUM_41 /* SER_RX - MCU input, from the bus through U6 */
@@ -113,9 +113,18 @@
 #define BOARD_PIN_SDI12_BUS_POWER GPIO_NUM_43 /* 12V_EN - switched rail many SDI-12 sensors need */
 
 /* SER_TX/SER_RX are shared with RS485 and RS232 transceivers, each
- * gated by their own enable pin - these must be held LOW (disabled)
- * whenever SDI-12 is in use to avoid multiple transceivers driving the
- * same UART lines at once. sdi12_bus_init() drives these low. */
+ * gated by their own enable pin - confirmed via DPTechnics support
+ * (Daan) that fully disabling each requires *_TX_EN=LOW AND
+ * *_RX_EN=HIGH (NOT both LOW, as originally assumed here - RS485/RS232's
+ * RX_EN pins are apparently active-low receiver-enables, a common
+ * RS-485 transceiver DE/~RE pattern, unlike SDI-12's own simple
+ * active-high buffer OE). Leaving RS485_RX_EN/RS232_RX_EN LOW left
+ * both transceivers' receivers actively driving the shared SER_RXD
+ * line, contending with SDI-12's own U6 output - the real cause of a
+ * real "RXD never sees anything" symptom on real hardware that
+ * otherwise checked out at every single other link (bus signal
+ * present, U6 wired to the bus, U6 powered, RX_EN correctly asserted).
+ * sdi12_bus_init() drives *_TX_EN low and *_RX_EN high accordingly. */
 #define BOARD_PIN_RS485_TX_EN GPIO_NUM_18
 #define BOARD_PIN_RS485_RX_EN GPIO_NUM_8
 #define BOARD_PIN_RS232_TX_EN GPIO_NUM_17

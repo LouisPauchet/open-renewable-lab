@@ -16,14 +16,16 @@
  * Real hardware bring-up so far, on two separate Walter Feels boards:
  * TX_EN/TXD genuinely reaches the bus (confirmed by multimeter, 0-5V
  * swing, via sdi12_bus_debug_tx_toggle_test() below) and RX_EN sits at
- * the expected enabled level - but the receive path is dead on both
- * boards: a loopback edge-count of our own TX transitions on RXD reads
- * 0, and a direct meter reading on the RXD GPIO pin itself shows no
- * voltage change at all despite the bus swinging. That isolates the
- * fault to the RX_EN-to-U6-OE or U6-output-to-RXD physical connection
- * (a schematic/PCB-trace question), not firmware - parity, TX_EN
- * polarity, and TXD/RXD pin order are all independently confirmed
- * correct at this point.
+ * the expected enabled level, but RXD saw no activity at all despite
+ * every individual link (bus signal present, U6 wired to the bus, U6
+ * powered, RX_EN correctly asserted) checking out - root cause found
+ * via DPTechnics support: RS485_RX_EN/RS232_RX_EN were being held LOW
+ * (assumed "disabled", matching SDI-12's own active-high OE
+ * convention), but those two are actually active-LOW receiver-enables
+ * (see board_pins.h), so both of those transceivers were left with
+ * their own receivers actively driving the shared SER_RXD line right
+ * alongside SDI-12's own U6 - a real bus contention, now fixed in
+ * sdi12_bus_init().
  *
  * The bus is intended to be called from a single task at a time
  * (sampling_engine's SDI-12 scheduler task in normal operation); an
