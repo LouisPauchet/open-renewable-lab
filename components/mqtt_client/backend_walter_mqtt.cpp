@@ -14,6 +14,8 @@
 
 #include "device_id.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "mqtt_backend.h"
 
 static const char *TAG = "mqtt_walter";
@@ -79,10 +81,39 @@ static const char *ISRG_ROOT_X1_PEM =
 #define LETS_ENCRYPT_CA_CERT_SLOT 12
 static bool s_ca_cert_uploaded;
 
+/* Given by mqtt_event_handler() when WALTER_MODEM_MQTT_EVENT_CONNECTED
+ * arrives - see be_connect()'s comment for why this is needed at all. */
+static SemaphoreHandle_t s_mqtt_connect_done;
+
+static void mqtt_event_handler(WMMQTTEventType event, const WMMQTTEventData *data, void *args)
+{
+    (void)args;
+    switch (event) {
+        case WALTER_MODEM_MQTT_EVENT_CONNECTED:
+            s_connected = data && data->rc == 0;
+            if (!s_connected) {
+                ESP_LOGW(TAG, "MQTT connect rejected (rc=%d)", data ? (int)data->rc : -1);
+            }
+            if (s_mqtt_connect_done) {
+                xSemaphoreGive(s_mqtt_connect_done);
+            }
+            break;
+        case WALTER_MODEM_MQTT_EVENT_DISCONNECTED:
+            s_connected = false;
+            break;
+        default:
+            break;
+    }
+}
+
 static esp_err_t be_init(const mqtt_settings_t *cfg)
 {
     snprintf(s_host, sizeof(s_host), "%s", cfg->host);
     s_port = cfg->port;
+
+    if (!s_mqtt_connect_done) {
+        s_mqtt_connect_done = xSemaphoreCreateBinary();
+    }
 
     /* mqttConfig()'s AT+SQNSMQTTCFG command takes client_id verbatim,
      * quoted, with no built-in fallback for an empty string (unlike
@@ -99,6 +130,7 @@ static esp_err_t be_init(const mqtt_settings_t *cfg)
     }
 
     WalterModem &modem = cellular_transport_get_modem();
+    modem.setMQTTEventHandler(mqtt_event_handler, NULL);
 
     uint8_t tls_profile = 1; /* profile slots are 1-6 per tlsConfigProfile()'s doc comment */
     if (cfg->use_tls) {
@@ -140,12 +172,29 @@ static esp_err_t be_init(const mqtt_settings_t *cfg)
 static esp_err_t be_connect(void)
 {
     WalterModem &modem = cellular_transport_get_modem();
+
+    s_connected = false;
+    if (s_mqtt_connect_done) {
+        xSemaphoreTake(s_mqtt_connect_done, 0); /* drain any stale/unrelated pending signal */
+    }
+
     if (!modem.mqttConnect(s_host, s_port)) {
         ESP_LOGE(TAG, "mqttConnect failed");
         return ESP_FAIL;
     }
-    s_connected = true;
-    return ESP_OK;
+
+    /* mqttConnect() returning true only means the AT command was
+     * accepted and the connection attempt started - the actual result
+     * arrives later via the asynchronous WALTER_MODEM_MQTT_EVENT_CONNECTED
+     * event (mqtt_event_handler above). Publishing immediately after
+     * mqttConnect() returns, without waiting for that event, fails
+     * every time since the broker session isn't actually up yet -
+     * confirmed on real hardware. Block briefly for it instead. */
+    if (!s_mqtt_connect_done || xSemaphoreTake(s_mqtt_connect_done, pdMS_TO_TICKS(10000)) != pdTRUE) {
+        ESP_LOGW(TAG, "MQTT connect timed out waiting for broker confirmation");
+        return ESP_FAIL;
+    }
+    return s_connected ? ESP_OK : ESP_FAIL;
 }
 
 static esp_err_t be_disconnect(void)
