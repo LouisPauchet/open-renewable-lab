@@ -2,12 +2,18 @@
 # Merged automatically on top of sdkconfig.defaults when the active
 # target is esp32s3 (the project's default - see sdkconfig.defaults).
 
-# TODO: confirm exact flash/PSRAM size for your Walter module revision
-# (datasheet/schematic) and adjust below if these defaults are wrong.
-CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+# The Walter module is an ESP32-S3-WROOM-1-N16R2: 16MiB flash, 2MiB
+# PSRAM in QUAD mode (the "R2" SKU - octal PSRAM only exists on R8/R16
+# SKUs). Confirmed against DPTechnics' own product page, the Zephyr
+# project's upstream Walter board docs, and QuickSpot/walter-esp-idf's
+# own working sdkconfig.defaults (none of which set an octal PSRAM
+# mode) - and the hard way, via a real "PSRAM chip is not connected, or
+# wrong PSRAM line mode" boot abort on real hardware with the previous
+# (wrong) CONFIG_SPIRAM_MODE_OCT=y guess. Do not set an octal PSRAM
+# mode here - ESP-IDF's quad default is correct for this module.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 CONFIG_SPIRAM=y
-CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 
 # The Walter Feels schematic shows IO43/IO44 (UART0's default TX0/RX0

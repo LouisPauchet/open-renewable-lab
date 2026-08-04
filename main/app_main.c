@@ -1,5 +1,6 @@
 #include <inttypes.h>
 
+#include "board_pins.h"
 #include "cellular_transport.h"
 #include "config_store.h"
 #include "device_id.h"
@@ -44,6 +45,11 @@ static void debug_result_sink_task(void *pvParams)
 
 void app_main(void)
 {
+    /* Must happen before any peripheral bus init below - the external
+     * I2C connector, onboard I2C sensor bus, and SD card are all fed
+     * from this switched rail on Walter Feels (see board_pins.h). */
+    board_pins_enable_3v3_sw();
+
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
 

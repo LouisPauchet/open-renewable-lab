@@ -81,6 +81,10 @@
 #define BOARD_PIN_STATUS_LED BOARD_PIN_NOT_SET /* many DevKit V1 clones have an onboard LED on GPIO2, but not universally - verify before wiring logic to it */
 #define BOARD_PIN_FORCE_AP_BUTTON BOARD_PIN_NOT_SET
 
+/* No switched 3.3V rail on a plain DevKit - sensors are powered from
+ * 3V3/5V directly, so board_pins_enable_3v3_sw() is a no-op here. */
+#define BOARD_PIN_3V3_SW_EN BOARD_PIN_NOT_SET
+
 /* No onboard HDC1080/LPS22HB/LTC4015 on a plain DevKit - onboard_i2c_bus_init()
  * fails gracefully (logged, non-fatal) without these pins set, same as
  * every other optional subsystem on this board variant. */
@@ -137,6 +141,20 @@
 #define BOARD_PIN_STATUS_LED      BOARD_PIN_NOT_SET /* TODO: optional; GPIOA (IO39) / GPIOB (IO38) are spare header pins if wiring one up */
 #define BOARD_PIN_FORCE_AP_BUTTON BOARD_PIN_NOT_SET /* TODO: optional; extension point for net_manager_force_ap_on() */
 
+/* ---- Switched 3.3V sensor-power rail (3V3_SW) ----
+ * Confirmed via the official Walter datasheet, DPTechnics' hardware
+ * FAQ, and the Walter Feels schematic (v2.6): module pin 26 ("3V3
+ * OUT") is a software-switched 3.3V rail, OFF by default, enabled by
+ * driving module pin 4 (ESP GPIO0) LOW. It feeds the onboard
+ * HDC1080/LPS22HB/IMU sensors and the CO2 sensor's supply per the
+ * schematic - real hardware testing also found it powers the external
+ * I2C connector and (very likely) the SD card, since both failed
+ * without it. GPIO0 is also the boot-mode strap pin (LOW at reset =
+ * download mode) - only drive it from board_pins_enable_3v3_sw(),
+ * called once well after boot completes (see app_main.c), never near
+ * a reset. */
+#define BOARD_PIN_3V3_SW_EN GPIO_NUM_0
+
 /* ---- Onboard peripherals ----
  * LTC4015 battery charger/monitor lives on BOARD_I2C_PORT above (the
  * same external-connector bus), fixed I2C addr 0x68 - no dedicated
@@ -171,4 +189,23 @@ static inline bool board_pin_is_set(int gpio_num)
 static inline uint64_t board_pin_bit_mask(int gpio_num)
 {
     return (uint64_t)1 << gpio_num;
+}
+
+/* Enables the switched 3.3V sensor-power rail (see BOARD_PIN_3V3_SW_EN
+ * above) on variants that have one; a no-op otherwise. Call exactly
+ * once, early in app_main() - well after boot completes, since this
+ * pin doubles as the GPIO0 download-mode boot strap. Several
+ * subsystems' init (external I2C connector, onboard I2C sensor bus, SD
+ * card) depend on this rail being up first. */
+static inline void board_pins_enable_3v3_sw(void)
+{
+    if (!board_pin_is_set(BOARD_PIN_3V3_SW_EN)) {
+        return;
+    }
+    gpio_config_t conf = {
+        .pin_bit_mask = board_pin_bit_mask(BOARD_PIN_3V3_SW_EN),
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&conf);
+    gpio_set_level(BOARD_PIN_3V3_SW_EN, 0); /* active LOW - see BOARD_PIN_3V3_SW_EN comment */
 }
