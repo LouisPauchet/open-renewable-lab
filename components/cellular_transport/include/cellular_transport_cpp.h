@@ -14,7 +14,7 @@
 
 #if CONFIG_IDF_TARGET_ESP32S3
 
-#include "WalterModem.h" /* VERIFY: header name/path from the fetched managed component */
+#include "WalterModem.h" /* confirmed header name/path via an actual esp32s3 build */
 
 WalterModem &cellular_transport_get_modem();
 

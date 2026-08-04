@@ -1,17 +1,16 @@
-/* See the big warning in include/cellular_transport.h - every
- * WalterModem call below is a best-effort guess from a research
- * summary, not verified against the actual library header (which
- * isn't fetched into this checkout). Treat this file as a skeleton to
- * correct once managed_components/dptechnics__walter-modem is
- * present, not as tested code.
- *
- * Only meaningful on esp32s3 (the Walter module's chip); on any other
+/* Only meaningful on esp32s3 (the Walter module's chip); on any other
  * target (e.g. the ESP32 DevKit V1 test rig - see board_pins.h) every
  * function here is a no-op stub, since dptechnics/walter-modem isn't
- * even fetched for other targets (main/idf_component.yml). */
+ * even fetched for other targets (main/idf_component.yml).
+ *
+ * WalterModem API usage below was verified against the actual fetched
+ * managed_components/dptechnics__walter-modem/src/WalterModem.h and
+ * the SDK's own examples/positioning/main/positioning.cpp (the
+ * reference this file's connect/GNSS sequencing mirrors). */
 
 #include "cellular_transport.h"
 
+#include <cinttypes>
 #include <cstring>
 #include <ctime>
 
@@ -32,12 +31,54 @@ static gnss_fix_t s_last_fix;
 
 #include "cellular_transport_cpp.h"
 
+/* Function-local static: thread-safe lazy init (C++11+), and guarantees
+ * exactly one WalterModem instance shared between this file and
+ * mqtt_client's backend_walter_mqtt.cpp - there is exactly one physical
+ * modem/AT-command UART, see cellular_transport_cpp.h. */
+WalterModem &cellular_transport_get_modem()
+{
+    static WalterModem modem;
+    return modem;
+}
+
+/* Given by gnss_event_handler() when a WALTER_MODEM_GNSS_EVENT_FIX
+ * event arrives - the SDK's GNSS API is asynchronous (gnssPerformAction()
+ * only requests a fix; the result shows up later via this callback), so
+ * cellular_transport_acquire_gnss_fix()'s blocking-with-timeout contract
+ * is built on top of it rather than being a direct SDK call. */
+static SemaphoreHandle_t s_gnss_fix_ready;
+static WMGNSSFixEvent s_pending_walter_fix;
+
+static void gnss_event_handler(WMGNSSEventType type, const WMGNSSEventData *data, void *args)
+{
+    (void)args;
+    if (type == WALTER_MODEM_GNSS_EVENT_FIX && data) {
+        s_pending_walter_fix = data->gnssfix;
+        xSemaphoreGive(s_gnss_fix_ready);
+    }
+}
+
+/* setOpState(FULL) + automatic network selection - the sequence the
+ * SDK's own examples use to (re)join the LTE network. Doesn't block for
+ * registration to complete; cellular_task() polls that separately. */
+static bool start_lte_connect(WalterModem &modem)
+{
+    if (!modem.setOpState(WALTER_MODEM_OPSTATE_FULL)) {
+        ESP_LOGE(TAG, "setOpState(FULL) failed");
+        return false;
+    }
+    if (!modem.setNetworkSelectionMode(WALTER_MODEM_NETWORK_SEL_MODE_AUTOMATIC)) {
+        ESP_LOGE(TAG, "setNetworkSelectionMode failed");
+        return false;
+    }
+    return true;
+}
+
 static void cellular_task(void *pvParams)
 {
     (void)pvParams;
     WalterModem &modem = cellular_transport_get_modem();
     for (;;) {
-        /* VERIFY: exact registration-status query API/enum names. */
         WalterModemNetworkRegState reg_state = modem.getNetworkRegState();
         s_registered = (reg_state == WALTER_MODEM_NETWORK_REG_REGISTERED_HOME ||
                         reg_state == WALTER_MODEM_NETWORK_REG_REGISTERED_ROAMING);
@@ -47,33 +88,45 @@ static void cellular_task(void *pvParams)
 
 esp_err_t cellular_transport_init(void)
 {
-    ESP_LOGW(TAG, "cellular_transport is unverified against the real walter-modem SDK - see header comment");
-
     net_settings_t net;
     config_store_get_net_settings(&net);
 
     WalterModem &modem = cellular_transport_get_modem();
 
-    /* VERIFY: begin() signature. UART0 is hardwired to the modem on the
-     * Walter module, so this likely needs no arguments, but confirm. */
-    if (!modem.begin()) {
+    if (!modem.begin(UART_NUM_1)) {
         ESP_LOGE(TAG, "modem.begin() failed");
         return ESP_FAIL;
     }
 
-    if (strlen(net.cellular_pin) > 0) {
-        /* VERIFY: SIM PIN unlock method name/signature. */
-        ESP_LOGW(TAG, "SIM PIN configured but unlockSIM()-equivalent call is not yet wired up - VERIFY and implement");
+    /* PDP context/SIM PIN must be set up before the modem goes FULL -
+     * NO_RF is the state the SDK's examples use for this setup phase. */
+    if (!modem.setOpState(WALTER_MODEM_OPSTATE_NO_RF)) {
+        ESP_LOGE(TAG, "setOpState(NO_RF) failed");
+        return ESP_FAIL;
     }
 
-    /* VERIFY: exact PDP context API name/parameter order/APN auth type,
-     * and whether activation is automatic after begin() or needs an
-     * explicit call. */
+    if (strlen(net.cellular_pin) > 0) {
+        if (!modem.unlockSIM(NULL, NULL, NULL, net.cellular_pin)) {
+            ESP_LOGE(TAG, "unlockSIM failed - check the configured SIM PIN");
+            return ESP_FAIL;
+        }
+    }
+
     if (!modem.definePDPContext(1, net.cellular_apn)) {
         ESP_LOGE(TAG, "definePDPContext failed");
         return ESP_FAIL;
     }
-    s_pdp_active = true; /* optimistic placeholder - confirm the real success signal */
+    s_pdp_active = true; /* context is defined; it activates once registered, not tracked separately here */
+
+    if (!start_lte_connect(modem)) {
+        return ESP_FAIL;
+    }
+
+    if (!modem.gnssConfig()) {
+        ESP_LOGW(TAG, "gnssConfig failed - GNSS fixes will not be available");
+    }
+    s_gnss_fix_ready = xSemaphoreCreateBinary();
+    modem.setGNSSEventHandler(gnss_event_handler, NULL);
 
     BaseType_t ok = xTaskCreate(cellular_task, "cellular", 4096, NULL, tskIDLE_PRIORITY + 2, NULL);
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
@@ -90,35 +143,61 @@ esp_err_t cellular_transport_acquire_gnss_fix(gnss_fix_t *out_fix, uint32_t time
             return ESP_ERR_NO_MEM;
         }
     }
+    if (!s_gnss_fix_ready) {
+        return ESP_ERR_INVALID_STATE; /* cellular_transport_init() hasn't run yet */
+    }
 
     WalterModem &modem = cellular_transport_get_modem();
 
-    /* VERIFY: exact GNSS trigger/result API. Walter's GNSS is part of
-     * the Sequans modem chip; the walter-esp-idf examples reportedly
-     * include a "positioning" example this should be checked against.
-     * Guessed shape: a blocking "perform a GNSS fix" call returning a
-     * result struct/status, since a cold GNSS fix can take tens of
-     * seconds - hence the caller-supplied timeout_ms. */
-    WalterModemGNSSFix walter_fix;
-    if (!modem.gnssPerformFix(&walter_fix, timeout_ms)) {
-        ESP_LOGW(TAG, "GNSS fix failed or timed out");
-        return ESP_ERR_TIMEOUT;
+    /* GNSS and LTE share the modem's RF front-end - the SDK's own
+     * positioning example disconnects from the network before every
+     * fix attempt ("Required for GNSS") and reconnects afterward.
+     * Best-effort: a slow/failed disconnect or reconnect doesn't abort
+     * the fix attempt itself, since cellular_task() will keep retrying
+     * registration regardless. */
+    bool was_registered = s_registered;
+    if (was_registered) {
+        modem.setOpState(WALTER_MODEM_OPSTATE_NO_RF);
+        WalterModemNetworkRegState reg_state = modem.getNetworkRegState();
+        int waited_ms = 0;
+        while (reg_state != WALTER_MODEM_NETWORK_REG_NOT_SEARCHING && waited_ms < 10000) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            waited_ms += 100;
+            reg_state = modem.getNetworkRegState();
+        }
     }
 
-    gnss_fix_t fix = {
-        .latitude = walter_fix.latitude,   /* VERIFY: field name */
-        .longitude = walter_fix.longitude, /* VERIFY: field name */
-        .altitude_m = walter_fix.altitude, /* VERIFY: field name */
-        .timestamp_unix = (int64_t)time(NULL),
-        .valid = true,
-    };
+    xSemaphoreTake(s_gnss_fix_ready, 0); /* drain any stale/unrelated pending signal */
+    esp_err_t result = ESP_ERR_TIMEOUT;
+    if (!modem.gnssPerformAction()) {
+        ESP_LOGW(TAG, "gnssPerformAction failed to start");
+        result = ESP_FAIL;
+    } else if (xSemaphoreTake(s_gnss_fix_ready, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        ESP_LOGW(TAG, "GNSS fix timed out after %" PRIu32 " ms", timeout_ms);
+    } else if (s_pending_walter_fix.status != WALTER_MODEM_GNSS_FIX_STATUS_READY) {
+        ESP_LOGW(TAG, "GNSS fix not ready (status=%d)", (int)s_pending_walter_fix.status);
+        result = ESP_FAIL;
+    } else {
+        gnss_fix_t fix = {};
+        fix.latitude = s_pending_walter_fix.latitude;
+        fix.longitude = s_pending_walter_fix.longitude;
+        fix.altitude_m = (float)s_pending_walter_fix.height;
+        fix.timestamp_unix = s_pending_walter_fix.timestamp;
+        fix.valid = true;
 
-    xSemaphoreTake(s_gnss_mutex, portMAX_DELAY);
-    s_last_fix = fix;
-    xSemaphoreGive(s_gnss_mutex);
+        xSemaphoreTake(s_gnss_mutex, portMAX_DELAY);
+        s_last_fix = fix;
+        xSemaphoreGive(s_gnss_mutex);
 
-    *out_fix = fix;
-    return ESP_OK;
+        *out_fix = fix;
+        result = ESP_OK;
+    }
+
+    if (was_registered) {
+        start_lte_connect(modem);
+    }
+
+    return result;
 }
 
 #else /* !CONFIG_IDF_TARGET_ESP32S3 */

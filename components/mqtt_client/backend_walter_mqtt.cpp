@@ -1,14 +1,8 @@
 /* Cellular-transport MQTT backend: wraps the on-modem MQTT client in
  * DPTechnics' WalterModem library.
  *
- * *** LOW CONFIDENCE / NEEDS VERIFICATION *** - see the warning in
- * cellular_transport/include/cellular_transport.h. Every WalterModem
- * call below (tlsConfigProfile, mqttConfig, mqttConnect, mqttPublish,
- * mqttDisconnect, and the WalterModemTlsVersion/TlsValidation enum
- * names) is a best-effort guess from a research summary, not verified
- * against the real header - fix these once
- * managed_components/dptechnics__walter-modem is fetched and its
- * WalterModem.h can be read directly.
+ * WalterModem API usage below was verified against the actual fetched
+ * managed_components/dptechnics__walter-modem/src/WalterModem.h.
  *
  * Only meaningful on esp32s3 (the Walter module's chip); on any other
  * target every operation below fails cleanly (ESP_ERR_NOT_SUPPORTED),
@@ -38,15 +32,13 @@ static esp_err_t be_init(const mqtt_settings_t *cfg)
 
     WalterModem &modem = cellular_transport_get_modem();
 
-    uint8_t tls_profile = 1; /* VERIFY: valid profile slot range (research noted up to 6 profiles) */
+    uint8_t tls_profile = 1; /* profile slots are 1-6 per tlsConfigProfile()'s doc comment */
     if (cfg->use_tls) {
         WalterModemTlsValidation validation =
             cfg->tls_allow_insecure ? WALTER_MODEM_TLS_VALIDATION_NONE : WALTER_MODEM_TLS_VALIDATION_CA;
-        /* VERIFY: tlsConfigProfile method name/signature. */
-        modem.tlsConfigProfile(tls_profile, WALTER_MODEM_TLS_VERSION_12, validation);
+        modem.tlsConfigProfile(tls_profile, validation, WALTER_MODEM_TLS_VERSION_12);
     }
 
-    /* VERIFY: mqttConfig signature (client id / username / password / tls profile slot). */
     if (!modem.mqttConfig(cfg->client_id, cfg->username, cfg->password, cfg->use_tls ? tls_profile : 0)) {
         ESP_LOGE(TAG, "mqttConfig failed");
         return ESP_FAIL;
@@ -57,7 +49,6 @@ static esp_err_t be_init(const mqtt_settings_t *cfg)
 static esp_err_t be_connect(void)
 {
     WalterModem &modem = cellular_transport_get_modem();
-    /* VERIFY: mqttConnect signature/return type. */
     if (!modem.mqttConnect(s_host, s_port)) {
         ESP_LOGE(TAG, "mqttConnect failed");
         return ESP_FAIL;
@@ -69,20 +60,22 @@ static esp_err_t be_connect(void)
 static esp_err_t be_disconnect(void)
 {
     WalterModem &modem = cellular_transport_get_modem();
-    modem.mqttDisconnect(); /* VERIFY method name */
+    modem.mqttDisconnect();
     s_connected = false;
     return ESP_OK;
 }
 
 static esp_err_t be_publish(const char *topic, const char *payload, int qos, bool retain)
 {
-    (void)retain; /* VERIFY: does mqttPublish take a retain flag? */
+    (void)retain; /* mqttPublish() has no retain parameter - the on-modem MQTT client doesn't support it */
     if (!s_connected) {
         return ESP_ERR_INVALID_STATE;
     }
     WalterModem &modem = cellular_transport_get_modem();
-    /* VERIFY: mqttPublish signature (payload pointer/length, qos type). */
-    if (!modem.mqttPublish(topic, (const uint8_t *)payload, strlen(payload), qos)) {
+    /* mqttPublish() takes a non-const uint8_t* even though it only reads
+     * the buffer (confirmed via WalterModem.h) - cast away const rather
+     * than copy, we own this buffer for the duration of the call. */
+    if (!modem.mqttPublish(topic, (uint8_t *)(const void *)payload, strlen(payload), (uint8_t)qos)) {
         return ESP_FAIL;
     }
     return ESP_OK;
@@ -91,7 +84,7 @@ static esp_err_t be_publish(const char *topic, const char *payload, int qos, boo
 static esp_err_t be_deinit(void)
 {
     if (s_connected) {
-        cellular_transport_get_modem().mqttDisconnect(); /* VERIFY */
+        cellular_transport_get_modem().mqttDisconnect();
         s_connected = false;
     }
     return ESP_OK;

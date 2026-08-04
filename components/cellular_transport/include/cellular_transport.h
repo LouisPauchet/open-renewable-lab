@@ -1,22 +1,14 @@
 #pragma once
 
 /*
- * *** LOW CONFIDENCE / NEEDS VERIFICATION ***
- *
  * This component wraps DPTechnics' `dptechnics/walter-modem` C++
- * library (declared as a managed dependency in main/idf_component.yml,
- * fetched from the ESP Component Registry at build time - not present
- * in this checkout, so its API could not be verified against source).
- * Method names/signatures used in cellular_transport.cpp are based on
- * a research summary (WalterModem class; PDP context activation;
- * WalterModemPSMMode/EDRXMode; on-modem MQTT with
- * WalterModemTlsVersion/TlsValidation profiles; an onboard GNSS
- * receiver), not verified headers.
- *
- * Before relying on this: open the fetched
- * managed_components/dptechnics__walter-modem/src/WalterModem.h and
- * fix every call flagged "VERIFY" in cellular_transport.cpp and
- * mqtt_client's backend_walter_mqtt.cpp to match the real signatures.
+ * library (declared as a managed dependency in main/idf_component.yml).
+ * cellular_transport.cpp's WalterModem calls (begin/opstate/PDP/SIM
+ * unlock/network selection/GNSS) and backend_walter_mqtt.cpp's on-modem
+ * MQTT calls have been verified against the real
+ * managed_components/dptechnics__walter-modem/src/WalterModem.h and its
+ * examples/positioning/main/positioning.cpp, via an actual esp32s3
+ * build - not yet against real network/GNSS behavior on hardware.
  */
 
 #include <stdbool.h>
