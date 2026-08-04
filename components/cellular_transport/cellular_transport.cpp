@@ -107,6 +107,14 @@ esp_err_t cellular_transport_init(void)
      * without this project's own INFO-level logging getting noisier. */
     esp_log_level_set("WalterModem", ESP_LOG_DEBUG);
 
+    /* AT+CPIN? isn't called anywhere else in this codebase - added here
+     * purely as a diagnostic (visible via the TX:/RX: trace above) for
+     * a real "definePDPContext failed (+CME ERROR: 4)" that persisted
+     * across a full flash erase and a hardware modem reset (which
+     * begin() already performs every boot), pointing at the SIM/network
+     * side rather than device-side state. */
+    modem.getSIMState();
+
     /* PDP context/SIM PIN must be set up before the modem goes FULL -
      * NO_RF is the state the SDK's examples use for this setup phase. */
     if (!modem.setOpState(WALTER_MODEM_OPSTATE_NO_RF)) {
