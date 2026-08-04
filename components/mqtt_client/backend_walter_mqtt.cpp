@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "device_id.h"
 #include "esp_log.h"
 #include "mqtt_backend.h"
 
@@ -29,6 +30,20 @@ static esp_err_t be_init(const mqtt_settings_t *cfg)
 {
     snprintf(s_host, sizeof(s_host), "%s", cfg->host);
     s_port = cfg->port;
+
+    /* mqttConfig()'s AT+SQNSMQTTCFG command takes client_id verbatim,
+     * quoted, with no built-in fallback for an empty string (unlike
+     * the SDK's own C++ default parameter "walter-mqtt-client", which
+     * we bypass by always passing cfg->client_id explicitly) - an
+     * empty client_id field (never set in the portal) sends
+     * `AT+SQNSMQTTCFG=0,""`, which the modem firmware rejects,
+     * confirmed on real hardware. Fall back to a device-unique id. */
+    char client_id[64];
+    if (cfg->client_id[0] != '\0') {
+        snprintf(client_id, sizeof(client_id), "%s", cfg->client_id);
+    } else {
+        snprintf(client_id, sizeof(client_id), "walter-%s", device_id_get());
+    }
 
     WalterModem &modem = cellular_transport_get_modem();
 
@@ -53,7 +68,7 @@ static esp_err_t be_init(const mqtt_settings_t *cfg)
         }
     }
 
-    if (!modem.mqttConfig(cfg->client_id, cfg->username, cfg->password, cfg->use_tls ? tls_profile : 0)) {
+    if (!modem.mqttConfig(client_id, cfg->username, cfg->password, cfg->use_tls ? tls_profile : 0)) {
         ESP_LOGE(TAG, "mqttConfig failed");
         return ESP_FAIL;
     }
