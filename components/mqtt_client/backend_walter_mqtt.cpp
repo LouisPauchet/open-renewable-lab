@@ -34,9 +34,23 @@ static esp_err_t be_init(const mqtt_settings_t *cfg)
 
     uint8_t tls_profile = 1; /* profile slots are 1-6 per tlsConfigProfile()'s doc comment */
     if (cfg->use_tls) {
-        WalterModemTlsValidation validation =
-            cfg->tls_allow_insecure ? WALTER_MODEM_TLS_VALIDATION_NONE : WALTER_MODEM_TLS_VALIDATION_CA;
-        modem.tlsConfigProfile(tls_profile, validation, WALTER_MODEM_TLS_VERSION_12);
+        /* WALTER_MODEM_TLS_VALIDATION_CA requires a CA certificate
+         * already uploaded via tlsWriteCredential() at a matching
+         * ca_cert_id (see the SDK's own examples/mqtts/main/mqtts.cpp)
+         * - this firmware has no certificate-upload feature yet, so CA
+         * validation would always fail here. Until that's built,
+         * "Allow insecure TLS" is the only working option for the
+         * cellular/on-modem MQTT backend, not just a self-signed-broker
+         * convenience like it is for the WiFi backend. */
+        if (!cfg->tls_allow_insecure) {
+            ESP_LOGE(TAG, "cellular MQTT backend has no CA certificate upload yet - "
+                          "enable 'Allow insecure TLS' or use the WiFi transport for CA-validated TLS");
+            return ESP_FAIL;
+        }
+        if (!modem.tlsConfigProfile(tls_profile, WALTER_MODEM_TLS_VALIDATION_NONE, WALTER_MODEM_TLS_VERSION_12)) {
+            ESP_LOGE(TAG, "tlsConfigProfile failed");
+            return ESP_FAIL;
+        }
     }
 
     if (!modem.mqttConfig(cfg->client_id, cfg->username, cfg->password, cfg->use_tls ? tls_profile : 0)) {
