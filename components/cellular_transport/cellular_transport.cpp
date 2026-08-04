@@ -98,6 +98,15 @@ esp_err_t cellular_transport_init(void)
         return ESP_FAIL;
     }
 
+    /* The SDK's own WalterModem.cpp has hidden ESP_LOGD("WalterModem",
+     * "TX: ...") / ("RX: ...") calls tracing every raw AT command and
+     * the modem's raw response - normally compiled out at this
+     * project's default INFO log level. Enabling just this one tag
+     * gives the exact AT command and modem error response (e.g. a
+     * +CME ERROR code) behind a failure like definePDPContext(),
+     * without this project's own INFO-level logging getting noisier. */
+    esp_log_level_set("WalterModem", ESP_LOG_DEBUG);
+
     /* PDP context/SIM PIN must be set up before the modem goes FULL -
      * NO_RF is the state the SDK's examples use for this setup phase. */
     if (!modem.setOpState(WALTER_MODEM_OPSTATE_NO_RF)) {
@@ -128,7 +137,14 @@ esp_err_t cellular_transport_init(void)
      * guaranteed to behave the same over AT+CGDCONT on every modem
      * firmware. */
     const char *apn = strlen(net.cellular_apn) > 0 ? net.cellular_apn : NULL;
-    if (!modem.definePDPContext(1, apn)) {
+    /* WALTER_MODEM_PDP_TYPE_IP (IPv4-only) got a hard "+CME ERROR: 4"
+     * (operation not supported) from AT+CGDCONT on real hardware, with
+     * an empty APN, no preceding SIM-unlock attempt, and even on a
+     * freshly-erased device - so it's a real rejection of the PDP type
+     * itself, not leftover state. Many IoT SIM subscriptions are
+     * provisioned as IPv4v6-only and reject a plain IPv4-only context
+     * request the same way. */
+    if (!modem.definePDPContext(1, apn, NULL, NULL, NULL, WALTER_MODEM_PDP_TYPE_IPV4V6)) {
         ESP_LOGE(TAG, "definePDPContext failed");
         return ESP_FAIL;
     }

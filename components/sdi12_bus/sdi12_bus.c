@@ -24,10 +24,12 @@ static const char *TAG = "sdi12_bus";
 static bool s_initialized;
 static SemaphoreHandle_t s_bus_mutex;
 static SemaphoreHandle_t s_edge_sem;
+static volatile uint32_t s_debug_edge_count; /* diagnostic only - see sdi12_bus_debug_tx_toggle_test() */
 
 static void IRAM_ATTR sdi12_gpio_isr(void *arg)
 {
     (void)arg;
+    s_debug_edge_count++;
     BaseType_t higher_prio_woken = pdFALSE;
     xSemaphoreGiveFromISR(s_edge_sem, &higher_prio_woken);
     if (higher_prio_woken) {
@@ -334,4 +336,41 @@ esp_err_t sdi12_read_data(char addr, uint8_t data_index, char *resp_buf, size_t 
     char body[4];
     snprintf(body, sizeof(body), "D%u", (unsigned)(data_index % 10));
     return sdi12_send_command(addr, body, resp_buf, resp_buf_len, 200);
+}
+
+void sdi12_bus_debug_tx_toggle_test(int cycles, uint32_t half_period_ms)
+{
+    if (!s_initialized) {
+        ESP_LOGE(TAG, "debug TX toggle test: bus not initialized");
+        return;
+    }
+    ESP_LOGW(TAG, "debug TX toggle test starting: %d cycles, %" PRIu32 " ms/half-cycle - "
+                  "watch the SDI-12 DATA line with a meter now", cycles, half_period_ms);
+    xSemaphoreTake(s_bus_mutex, portMAX_DELAY);
+
+    /* RX_EN is already permanently enabled (sdi12_bus_init()) - if the
+     * receive chain (U6/RX_EN/RXD wiring+GPIO config) works at all, our
+     * own TXD transitions on the shared bus should be visible as edges
+     * on RXD too (a loopback self-test). GPIO_INTR_ANYEDGE (not the
+     * normal rx_char()'s POSEDGE-only) to catch both directions of this
+     * slow toggle. */
+    s_debug_edge_count = 0;
+    gpio_set_intr_type(BOARD_PIN_SDI12_RXD, GPIO_INTR_ANYEDGE);
+    gpio_intr_enable(BOARD_PIN_SDI12_RXD);
+
+    gpio_set_level(BOARD_PIN_SDI12_TX_EN, 1); /* enable the TX buffer onto the bus */
+    for (int i = 0; i < cycles; i++) {
+        gpio_set_level(BOARD_PIN_SDI12_TXD, 1);
+        vTaskDelay(pdMS_TO_TICKS(half_period_ms));
+        gpio_set_level(BOARD_PIN_SDI12_TXD, 0);
+        vTaskDelay(pdMS_TO_TICKS(half_period_ms));
+    }
+    gpio_set_level(BOARD_PIN_SDI12_TXD, 0); /* idle = marking = LOW */
+    gpio_set_level(BOARD_PIN_SDI12_TX_EN, 0); /* back to high-Z */
+
+    gpio_intr_disable(BOARD_PIN_SDI12_RXD);
+    xSemaphoreGive(s_bus_mutex);
+    ESP_LOGW(TAG, "debug TX toggle test done - RXD loopback saw %" PRIu32 " edge(s) (expect up to %d if the "
+                  "receive chain works; 0 means RX_EN/RXD/U6 isn't passing the bus through to the MCU)",
+             s_debug_edge_count, cycles * 2);
 }
