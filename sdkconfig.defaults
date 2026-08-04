@@ -35,6 +35,18 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 # API/MQTT payloads. Its own Kconfig (CJSON_NESTING_LIMIT/
 # CJSON_CIRCULAR_LIMIT) defaults are fine as-is.
 
+# Heap corruption diagnostics: wraps every heap allocation with canary
+# bytes checked on free/realloc, so a buffer overflow (or an
+# undersized-stack task overrunning into an adjacent heap block) panics
+# with the actual overrun allocation's address at the point it's next
+# freed - instead of, as happened on real hardware, an unrelated
+# tlsf_malloc() call much later hitting corrupted free-list metadata
+# with no indication of what caused it. Meaningful RAM/CPU overhead
+# (each allocation grows by ~14 bytes and free()/realloc() do a canary
+# check) - fine for bring-up, worth revisiting once hardware bring-up
+# is stable.
+CONFIG_HEAP_POISONING_COMPREHENSIVE=y
+
 # The ESP-IDF default (3584B) overflows during app_main()'s synchronous
 # init - PSA Crypto's driver-dispatch call chain (used by config_store's
 # password hashing, see hash_with_salt()) is noticeably deeper than the

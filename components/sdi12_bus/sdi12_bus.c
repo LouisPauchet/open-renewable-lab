@@ -55,7 +55,14 @@ static void tx_char(char c)
             ones++;
         }
     }
-    int parity = (ones % 2 == 0) ? 0 : 1; /* even parity */
+    /* SDI-12's character framing is 7O1 (7 data bits, ODD parity, 1
+     * stop bit) - NOT even parity. A compliant sensor is required to
+     * silently ignore any character with a parity error rather than
+     * respond with an error, which is indistinguishable from "nothing
+     * connected" - this was the actual root cause of a real sensor
+     * (spec-verified working on a Campbell CR350) never responding to
+     * anything, including a bus scan, on real hardware. */
+    int parity = (ones % 2 == 0) ? 1 : 0; /* odd parity: total 1-bits (data+parity) must be odd */
 
     tx_bit(0); /* start bit (space) */
     for (int i = 0; i < 7; i++) {
