@@ -112,6 +112,12 @@ static void config_set_defaults(device_config_t *c)
     c->schema_version = CONFIG_SCHEMA_VERSION;
 
     c->net.transport = TRANSPORT_UNCONFIGURED;
+    /* Deliberately blank, not a guessed default: most IoT/M2M SIMs ship
+     * with PIN lock disabled entirely, and unlockSIM() with an
+     * unneeded/wrong PIN risks decrementing the SIM's (usually 3-try)
+     * PIN retry counter toward a PUK lock - real hardware testing
+     * found this out the hard way with a "1111" default. Leave this
+     * blank unless a student's specific SIM actually needs one. */
 
     c->mqtt.enabled = false;
     c->mqtt.port = 1883;
@@ -125,6 +131,8 @@ static void config_set_defaults(device_config_t *c)
 
     c->battery.chemistry = BATTERY_CHEM_LI_ION;
     c->battery.cell_count = 1;
+
+    c->sd.log_format = SD_LOG_FORMAT_LONG;
 
     c->variable_count = 0;
     c->generation = 0;
@@ -240,6 +248,10 @@ cJSON *config_store_to_json(const device_config_t *c)
     cJSON_AddNumberToObject(battery, "chemistry", c->battery.chemistry);
     cJSON_AddNumberToObject(battery, "cell_count", c->battery.cell_count);
 
+    cJSON *sd = cJSON_AddObjectToObject(root, "sd");
+    cJSON_AddNumberToObject(sd, "log_format", c->sd.log_format);
+    cJSON_AddStringToObject(sd, "station_name", c->sd.station_name);
+
     cJSON *vars = cJSON_AddArrayToObject(root, "variables");
     for (uint8_t i = 0; i < c->variable_count; i++) {
         cJSON_AddItemToArray(vars, config_store_variable_to_json(&c->variables[i]));
@@ -292,6 +304,12 @@ bool config_store_from_json(const cJSON *root, device_config_t *c)
     if (battery) {
         c->battery.chemistry = (battery_chemistry_t)json_get_int(battery, "chemistry", c->battery.chemistry);
         c->battery.cell_count = (uint8_t)json_get_int(battery, "cell_count", c->battery.cell_count);
+    }
+
+    const cJSON *sd = cJSON_GetObjectItemCaseSensitive(root, "sd");
+    if (sd) {
+        c->sd.log_format = (sd_log_format_t)json_get_int(sd, "log_format", c->sd.log_format);
+        json_get_str(sd, "station_name", c->sd.station_name, sizeof(c->sd.station_name), c->sd.station_name);
     }
 
     const cJSON *vars = cJSON_GetObjectItemCaseSensitive(root, "variables");
@@ -666,6 +684,26 @@ esp_err_t config_store_set_battery_settings(const battery_settings_t *settings)
     }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_config.battery = *settings;
+    s_config.generation++;
+    esp_err_t err = save_locked();
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
+void config_store_get_sd_settings(sd_settings_t *out)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    *out = s_config.sd;
+    xSemaphoreGive(s_mutex);
+}
+
+esp_err_t config_store_set_sd_settings(const sd_settings_t *settings)
+{
+    if (!settings) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_config.sd = *settings;
     s_config.generation++;
     esp_err_t err = save_locked();
     xSemaphoreGive(s_mutex);

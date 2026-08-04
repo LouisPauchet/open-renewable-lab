@@ -511,27 +511,83 @@ uses SDMMC signal names (`SD_CMD`/`SD_CLK`/`SD_DATA0`).
 
 Two independent, day-bucketed CSV file series under `/sdcard/data/`:
 
-- `sensors_YYYYMMDD.csv` — one row per finalized `aggregate_result_t`,
-  fed by a queue (`RESULT_QUEUE_LEN = 32`) that's what
-  `sd_logger_get_sink_queue()` hands to `sampling_engine_add_result_sink()`.
+- `sensors_...csv` — sensor readings, shape controlled by
+  `sd_settings_t.log_format` (`/api/settings/sd`, see below), fed by a
+  queue (`RESULT_QUEUE_LEN = 32`) that's what `sd_logger_get_sink_queue()`
+  hands to `sampling_engine_add_result_sink()`.
 - `position_YYYYMMDD.csv` — one row per GNSS fix, fed by a second, smaller
-  queue (`POSITION_QUEUE_LEN = 4`) via `sd_logger_log_position()`.
+  queue (`POSITION_QUEUE_LEN = 4`) via `sd_logger_log_position()`. Always
+  the original long-style layout regardless of `log_format` - a single
+  fixed-schema record type, not per-variable/aggregate data.
 
 Both are serviced by the same `sd_writer_task` (all file I/O confined to
 one task), which drains the sensor queue with a bounded wait
-(`pdMS_TO_TICKS(5000)`, for periodic watchdog resets) and then
-non-blockingly drains any pending position rows each iteration.
+(`pdMS_TO_TICKS(5000)`, for periodic watchdog resets), then calls
+`check_group_timeouts()` (see below) and non-blockingly drains any
+pending position rows, each iteration.
 
 Filenames use UTC via `gmtime_r`; unsynced timestamps (before SNTP/cellular
 time sync) land in `*_19700101.csv` — a deliberate, well-defined bucket
-rather than special-cased handling. Every new file starts with
-`# device_id=<id>` before the CSV header row (see
-[section 16](#16-device-identification-device_id)).
+rather than special-cased handling.
 
 Card-absent/write-failure resilience: `write_result_row()`/
-`write_position_row()` just log an error and increment `s_drop_count`
-(exposed via `sd_logger_get_drop_count()`, surfaced in `/api/status`)
-rather than blocking or crashing.
+`write_position_row()`/`flush_group_row()` just log an error and increment
+`s_drop_count` (exposed via `sd_logger_get_drop_count()`, surfaced in
+`/api/status`) rather than blocking or crashing.
+
+### 11.1 `sd_log_format_t`: LONG vs. WIDE_SIMPLE vs. WIDE_TOA5
+
+`SD_LOG_FORMAT_LONG` (default) is the original per-event-row layout,
+`sensors_YYYYMMDD.csv`, one row per finalized `aggregate_result_t` -
+`write_result_row()`, unchanged.
+
+`SD_LOG_FORMAT_WIDE_SIMPLE`/`SD_LOG_FORMAT_WIDE_TOA5` write one row per
+"scan" instead - one column per variable+aggregate, grouped into a
+separate file per distinct `log_interval_ms` (mirroring how a Campbell
+Scientific datalogger writes a separate output table per scan rate).
+This needs actual row-assembly logic, since `aggregate_result_t`s for
+different variables arrive independently on the same queue, whenever
+each variable's own aggregation cycle in `sampling_engine.c` completes:
+
+- `rebuild_groups_if_needed()` polls `config_store_get_generation()`
+  (same pattern as `sampling_engine`'s scheduler/aggregation tasks) and
+  regroups all enabled variables by `log_interval_ms` into
+  `s_groups[MAX_INTERVAL_GROUPS]`, flushing any in-flight pending rows
+  first so membership never changes out from under a row being
+  assembled.
+- `handle_wide_result()` files an incoming result into its group's
+  pending row. A variable reporting again while its own slot is already
+  filled means a new scan has started, so the (possibly incomplete)
+  pending row is flushed before starting the next one - this keeps
+  logging live even if one sensor in a group is permanently missing,
+  rather than waiting forever for a slot that will never fill.
+  Independently, `check_group_timeouts()` force-flushes any pending row
+  older than `log_interval_ms + GROUP_TIMEOUT_GRACE_MS` (5s), covering
+  the case where a group's *only* member (or the specific member that
+  would otherwise trigger the "reporting again" flush) stops reporting.
+  A variable's blank cell in the flushed row means it didn't make it in
+  time for that particular scan.
+- File naming embeds an FNV-1a hash (`build_column_signature()`/
+  `fnv1a()`) of the group's exact column set (variable names, units,
+  aggregate masks) into the filename
+  (`sensors_iv<interval>_<hash>_YYYYMMDD.csv`). If a config edit changes
+  a group's columns mid-day, the hash changes and logging transparently
+  rolls onto a new file instead of corrupting an existing file's column
+  alignment - no need to read back and diff any existing file's header.
+- `write_group_header()`/`write_group_data_row()` branch on
+  `log_format` for the two wide variants: `WIDE_SIMPLE` writes a single
+  `# station_name=...,device_id=...,interval_ms=...` comment line plus
+  one column-name header row (names baked in as
+  `<name>_<agg>[_<unit>]`, sanitized via `sanitize_csv_token()` since
+  student-chosen names/units aren't guaranteed comma/quote-free);
+  `WIDE_TOA5` writes real TOA5's 4-line header (file-info, quoted field
+  names, units, aggregate-type-per-column using TOA5's own
+  Avg/Max/Min/Std/Smp vocabulary - see `AGG_COLUMNS[]`) and formats
+  `TIMESTAMP` as a quoted `"YYYY-MM-DD HH:MM:SS"` string rather than a
+  raw unix timestamp, matching real TOA5 exports.
+- `sd_settings_t` (`station_name`, `log_format`) lives in
+  `device_config_t.sd`, same getter/setter/REST (`/api/settings/sd`)
+  pattern as `battery_settings_t`/`position_settings_t`.
 
 ---
 

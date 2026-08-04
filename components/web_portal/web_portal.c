@@ -26,7 +26,10 @@ esp_err_t web_portal_init(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 24;
+    config.max_uri_handlers = 32; /* bump generously past the actual handler count when adding new
+                                    * /api/... routes - httpd_register_uri_handler() fails silently
+                                    * (just an "no slots left" warning) past this cap, not an error
+                                    * anyone would notice without reading the boot log closely */
     config.stack_size = 8192;
     config.lru_purge_enable = true;
 

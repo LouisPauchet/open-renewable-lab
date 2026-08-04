@@ -106,13 +106,29 @@ esp_err_t cellular_transport_init(void)
     }
 
     if (strlen(net.cellular_pin) > 0) {
+        /* Non-fatal: many IoT/M2M SIMs ship with PIN lock disabled
+         * entirely, and unlockSIM() on one of those errors out with
+         * nothing actually wrong - continuing to PDP/registration
+         * still works fine in that case. Aborting the whole cellular
+         * stack here would only make sense for a SIM that's genuinely
+         * PIN-locked with the wrong PIN configured, which looks
+         * identical from this return value alone. Do NOT retry this
+         * automatically - repeated wrong-PIN attempts risk exhausting
+         * the SIM's (usually 3-try) retry counter toward a PUK lock. */
         if (!modem.unlockSIM(NULL, NULL, NULL, net.cellular_pin)) {
-            ESP_LOGE(TAG, "unlockSIM failed - check the configured SIM PIN");
-            return ESP_FAIL;
+            ESP_LOGW(TAG, "unlockSIM failed (SIM may simply not be PIN-locked) - "
+                          "continuing; if registration fails next, check the configured SIM PIN");
         }
     }
 
-    if (!modem.definePDPContext(1, net.cellular_apn)) {
+    /* An empty APN (the portal's "Auto-detect" clears the field) must
+     * be passed as NULL, not "" - definePDPContext()'s documented
+     * default (letting the network provide the APN) is keyed off the
+     * pointer being NULL, and an explicitly empty string isn't
+     * guaranteed to behave the same over AT+CGDCONT on every modem
+     * firmware. */
+    const char *apn = strlen(net.cellular_apn) > 0 ? net.cellular_apn : NULL;
+    if (!modem.definePDPContext(1, apn)) {
         ESP_LOGE(TAG, "definePDPContext failed");
         return ESP_FAIL;
     }

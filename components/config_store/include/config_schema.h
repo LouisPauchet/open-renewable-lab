@@ -137,6 +137,43 @@ typedef struct {
     uint8_t cell_count;
 } battery_settings_t;
 
+typedef enum {
+    /* One row per (variable, aggregate-finalize-event) - the original
+     * format. Simple, never needs to wait/align across variables, but
+     * one column ("value") shared by every variable/aggregate, so
+     * every row repeats the variable name/aggregate type as text. */
+    SD_LOG_FORMAT_LONG = 0,
+
+    /* One row per "scan" (see sd_logger.c) with one column per
+     * variable+aggregate, grouped into a separate file per distinct
+     * log_interval_ms - variables sharing an interval land in the same
+     * file/row, like a Campbell Scientific datalogger's output tables.
+     * Column names bake in the unit (e.g. "PV_Voltage_mean_V"); a
+     * single "# station_name=...,device_id=...,interval_ms=..." comment
+     * line stands in for TOA5's file-info line. */
+    SD_LOG_FORMAT_WIDE_SIMPLE = 1,
+
+    /* Same row/column layout and file grouping as WIDE_SIMPLE, but the
+     * header instead matches Campbell Scientific's TOA5 format: a
+     * quoted "TOA5",station,model,... file-info line, quoted field
+     * names (unit NOT baked into the name), a units row, and a
+     * process/aggregate-type row (Avg/Max/Min/Std/Smp) - importable by
+     * TOA5-aware tools (Loggernet, common R/Python TOA5 readers).
+     * TIMESTAMP is a quoted "YYYY-MM-DD HH:MM:SS" string per TOA5
+     * convention rather than a raw unix timestamp. */
+    SD_LOG_FORMAT_WIDE_TOA5 = 2,
+} sd_log_format_t;
+
+typedef struct {
+    sd_log_format_t log_format;
+
+    /* Free-form station identity, used in WIDE_SIMPLE's comment line
+     * and as TOA5's file-info "StationName" field. Falls back to the
+     * device_id if left blank. Purely a data-file label - has no
+     * effect on device behavior. */
+    char station_name[32];
+} sd_settings_t;
+
 typedef struct {
     uint32_t schema_version;
 
@@ -147,6 +184,7 @@ typedef struct {
     mqtt_settings_t mqtt;
     position_settings_t position;
     battery_settings_t battery;
+    sd_settings_t sd;
 
     variable_config_t variables[MAX_VARIABLES];
     uint8_t variable_count;

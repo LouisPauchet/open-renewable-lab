@@ -197,7 +197,10 @@ If you don't know your SDI-12 sensor's address, or your I2C sensor's
 address, use the **Scan SDI-12 bus** / **Scan I2C bus** buttons above the
 variable list. This probes every possible address on the bus and reports
 which ones respond. An SDI-12 scan can take a few seconds since it tries up
-to 62 possible addresses.
+to 62 possible addresses. I2C results are shown as a decimal number with
+the hex equivalent alongside (e.g. `72 (0x48)`) — enter the **decimal**
+number into the "I2C address" field, since that field only accepts plain
+decimal.
 
 ### 6.3 Understanding sampling vs. logging vs. aggregation
 
@@ -428,7 +431,12 @@ reporting (this is separate from the always-available setup hotspot):
 For **WiFi**, enter the SSID and password of the network to join.
 
 For **Cellular**, enter your SIM's **APN** and, if the SIM requires one, its
-**PIN**.
+**PIN** — leave the PIN blank unless you know your SIM actually needs one.
+Many IoT/M2M SIMs ship with PIN lock disabled entirely, and repeatedly
+trying a wrong PIN risks permanently locking the SIM (most SIMs allow
+only 3 attempts before requiring a PUK code). If you don't know your APN,
+most networks negotiate it automatically when left blank — click
+**Auto-detect** to clear the field rather than guessing.
 
 > **Changing the transport requires a reboot** to take effect — the portal
 > will tell you when this is the case after saving. Other settings (MQTT
@@ -461,36 +469,74 @@ following the same batching behavior as your sensor data.
 
 ### 10.1 On the SD card
 
-Sensor readings are written to daily CSV files under `/data/` on the card,
-named `sensors_YYYYMMDD.csv` (UTC date), e.g. `sensors_20260713.csv`. If the
-device hasn't yet obtained the correct time when it writes a file, that data
-lands in `sensors_19700101.csv` instead — a clearly-labeled "unsynced"
-bucket rather than a wrong date.
+The **SD logging** settings section lets you choose between three CSV
+layouts. Changing this only affects newly-created files — it doesn't
+rewrite anything already logged.
 
-Each file starts with two header lines:
+**Long (default)** — one row per variable per aggregate event, all
+variables and days interleaved into `sensors_YYYYMMDD.csv` (UTC date),
+e.g. `sensors_20260713.csv`:
 
 ```
 # device_id=AABBCCDDEEFF
 timestamp_unix,time_synced,variable_id,name,sample_count,aggregate_mask,raw,mean,min,max,stddev
 ```
 
-The `# device_id=...` line identifies which device produced the file — handy
-once you're collecting cards from several stations. Every column after that
-is always present in every row (raw/mean/min/max/stddev are always computed
-internally and written, regardless of which aggregates you selected for a
-given variable) — `aggregate_mask` tells you which ones you actually asked
-for and should treat as meaningful for that row; the rest can be ignored.
+Every column after the header is always present in every row (raw/mean/
+min/max/stddev are always computed internally and written, regardless of
+which aggregates you selected) — `aggregate_mask` tells you which ones you
+actually asked for; the rest can be ignored.
 
-Position fixes (cellular only, if enabled) go to a separate file,
-`position_YYYYMMDD.csv`, with columns:
+**Wide, simple header / Wide, TOA5 format** — one row per "scan" instead,
+with one column per variable+aggregate, similar to how a Campbell
+Scientific datalogger writes its output tables. Variables that share the
+same **log interval** land together in one file/row; variables with a
+different log interval go to a separate file — so if you have a fast
+10-second variable and a slow 5-minute variable, you'll get two wide
+files, each internally synchronized. Files are named
+`sensors_iv<interval>_<hash>_YYYYMMDD.csv` (the hash changes automatically
+if you edit which variables/aggregates feed that interval group, so an
+older file's columns never get silently misaligned by a later edit).
+
+- **Wide, simple header** looks like:
+  ```
+  # station_name=greenhouse-1,device_id=AABBCCDDEEFF,interval_ms=60000
+  timestamp_unix,time_synced,record,PV_Voltage_mean_V,PV_Voltage_stddev_V,PV_Current_mean_A
+  1752345600,1,0,21.40,0.30,1.05
+  ```
+- **Wide, TOA5 format** matches Campbell Scientific's TOA5 layout (a
+  4-line header: file info, quoted field names, units, and
+  aggregate-type per column) and is importable directly by TOA5-aware
+  tools:
+  ```
+  "TOA5","greenhouse-1","WalterSensorNode","AABBCCDDEEFF","IDFv6.0.2","walter_sensor_node","0","Interval_60s"
+  "TIMESTAMP","RECORD","PV_Voltage_Avg","PV_Voltage_Std","PV_Current_Avg"
+  "TS","RN","V","V","A"
+  "","","Avg","Std","Avg"
+  "2026-07-13 12:00:00",0,21.40,0.30,1.05
+  ```
+
+A blank cell in a wide row means that particular variable didn't report
+in time for that scan (e.g. a sensor briefly disconnected) — the row is
+still written once the log interval elapses, rather than waiting forever.
+
+If the device hasn't yet obtained the correct time when it writes a file,
+that data lands in a `..._19700101.csv` file instead — a clearly-labeled
+"unsynced" bucket rather than a wrong date (applies to all three formats).
+
+Position fixes (cellular only, if enabled) always go to a separate file
+regardless of the SD logging format setting, `position_YYYYMMDD.csv`,
+with columns:
 
 ```
 timestamp_unix,time_synced,latitude,longitude,altitude_m
 ```
 
-Both file types can be opened directly in Excel, Google Sheets, or loaded
-with `pandas.read_csv(path, comment='#')` (the `comment='#'` skips the
-device-id header line automatically).
+All of these can be opened directly in Excel, Google Sheets, or loaded
+with `pandas.read_csv(path, comment='#')` for the Long/Wide-simple formats
+(the `comment='#'` skips the info line automatically) — TOA5 files are
+best read with a TOA5-aware reader (e.g. Campbell's Loggernet, or common
+R/Python TOA5 packages) since their header uses more than one line.
 
 ### 10.2 Over MQTT
 

@@ -284,6 +284,53 @@ static esp_err_t battery_put_handler(httpd_req_t *req)
     return wp_send_json(req, resp);
 }
 
+/* ---- SD card logging format settings ---- */
+
+static esp_err_t sd_get_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    sd_settings_t s;
+    config_store_get_sd_settings(&s);
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddNumberToObject(o, "log_format", s.log_format);
+    cJSON_AddStringToObject(o, "station_name", s.station_name);
+    return wp_send_json(req, o);
+}
+
+static esp_err_t sd_put_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    cJSON *body;
+    if (wp_read_json_body(req, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+
+    sd_settings_t current;
+    config_store_get_sd_settings(&current);
+
+    sd_settings_t s = current;
+    s.log_format = (sd_log_format_t)json_int(body, "log_format", current.log_format);
+    json_str(body, "station_name", s.station_name, sizeof(s.station_name), current.station_name);
+    cJSON_Delete(body);
+
+    if (s.log_format != SD_LOG_FORMAT_LONG && s.log_format != SD_LOG_FORMAT_WIDE_SIMPLE &&
+        s.log_format != SD_LOG_FORMAT_WIDE_TOA5) {
+        return wp_send_error(req, "400 Bad Request", "invalid log_format");
+    }
+
+    config_store_set_sd_settings(&s);
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddBoolToObject(resp, "ok", true);
+    return wp_send_json(req, resp);
+}
+
 /* ---- Portal password ---- */
 
 static esp_err_t password_put_handler(httpd_req_t *req)
@@ -444,6 +491,11 @@ void api_settings_register_routes(httpd_handle_t server)
     u = (httpd_uri_t){ .uri = "/api/settings/battery", .method = HTTP_GET, .handler = battery_get_handler };
     httpd_register_uri_handler(server, &u);
     u = (httpd_uri_t){ .uri = "/api/settings/battery", .method = HTTP_PUT, .handler = battery_put_handler };
+    httpd_register_uri_handler(server, &u);
+
+    u = (httpd_uri_t){ .uri = "/api/settings/sd", .method = HTTP_GET, .handler = sd_get_handler };
+    httpd_register_uri_handler(server, &u);
+    u = (httpd_uri_t){ .uri = "/api/settings/sd", .method = HTTP_PUT, .handler = sd_put_handler };
     httpd_register_uri_handler(server, &u);
 
     u = (httpd_uri_t){ .uri = "/api/settings/password", .method = HTTP_PUT, .handler = password_put_handler };

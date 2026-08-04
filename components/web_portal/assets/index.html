@@ -74,6 +74,10 @@
   <form id="battery-form"></form>
   <div class="msg" id="battery-msg"></div>
 
+  <h2>SD card logging</h2>
+  <form id="sd-form"></form>
+  <div class="msg" id="sd-msg"></div>
+
   <h2>Portal password</h2>
   <form id="password-form">
     <label>Current password <input type="password" id="pw-old" required></label>
@@ -344,7 +348,8 @@ $("#scan-i2c-btn").addEventListener("click", async () => {
   try {
     const addrs = await api("/api/bus/i2c/scan");
     $("#variables-msg").textContent = addrs.length
-      ? ("Found addresses: " + addrs.map(a => "0x" + a.toString(16)).join(", "))
+      ? ("Found addresses: " + addrs.map(a => a + " (0x" + a.toString(16) + ")").join(", ") +
+         " - enter the decimal number into \"I2C address\" below")
       : "No I2C devices responded.";
     $("#variables-msg").className = "msg ok";
   } catch (err) {
@@ -460,7 +465,10 @@ function networkFormFields(n) {
       <div><label>WiFi password ${n.wifi_sta_password_set ? "<small>(set - leave blank to keep)</small>" : ""} <input type="password" name="wifi_sta_password"></label></div>
     </div>
     <div class="row">
-      <div><label>Cellular APN <input name="cellular_apn" value="${n.cellular_apn}"></label></div>
+      <div><label>Cellular APN <input name="cellular_apn" id="cellular-apn-input" value="${n.cellular_apn}"></label>
+        <button type="button" id="apn-autodetect-btn">Auto-detect</button>
+        <small>Most networks negotiate the APN automatically when this is left blank - "Auto-detect" just clears it.</small>
+      </div>
       <div><label>SIM PIN ${n.cellular_pin_set ? "<small>(set - leave blank to keep)</small>" : ""} <input type="password" name="cellular_pin"></label></div>
     </div>
     <button type="submit">Save network settings</button>
@@ -472,6 +480,9 @@ async function refreshNetwork() {
   try { n = await api("/api/settings/network"); } catch { return; }
   const form = $("#network-form");
   form.innerHTML = networkFormFields(n);
+  $("#apn-autodetect-btn", form).addEventListener("click", () => {
+    $("#cellular-apn-input", form).value = "";
+  });
   form.onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
@@ -550,6 +561,40 @@ async function refreshBattery() {
   };
 }
 
+/* ---- SD card logging format ---- */
+function sdFormFields(s) {
+  return `
+    <label>Log format
+      <select name="log_format">
+        <option value="0" ${s.log_format == 0 ? "selected" : ""}>Long (one row per variable/aggregate event)</option>
+        <option value="1" ${s.log_format == 1 ? "selected" : ""}>Wide, simple header (one row per scan, station info + variable_agg_unit columns)</option>
+        <option value="2" ${s.log_format == 2 ? "selected" : ""}>Wide, TOA5 format (Campbell Scientific-compatible)</option>
+      </select>
+    </label>
+    <label>Station name <input name="station_name" value="${s.station_name || ''}" placeholder="(defaults to device ID if blank)"></label>
+    <button type="submit">Save SD logging settings</button>
+    <small>Wide formats group variables sharing the same log interval into one file/row each, like a datalogger's output tables - variables with different log intervals land in separate files. Changing the format takes effect for newly-created files (a new day's file, or the next time the variable set for an interval group changes) - it won't rewrite already-logged data.</small>
+  `;
+}
+async function refreshSd() {
+  let s;
+  try { s = await api("/api/settings/sd"); } catch { return; }
+  const form = $("#sd-form");
+  form.innerHTML = sdFormFields(s);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const body = { log_format: parseInt(fd.get("log_format"), 10), station_name: fd.get("station_name") || "" };
+    try {
+      await api("/api/settings/sd", { method: "PUT", body });
+      $("#sd-msg").textContent = "Saved."; $("#sd-msg").className = "msg ok";
+      await refreshSd();
+    } catch (err) {
+      $("#sd-msg").textContent = "Save failed: " + err.message; $("#sd-msg").className = "msg err";
+    }
+  };
+}
+
 /* ---- password ---- */
 $("#password-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -593,7 +638,7 @@ $("#reboot-btn").addEventListener("click", async () => {
 });
 
 async function refreshAll() {
-  await Promise.all([refreshStatus(), refreshVariables(), refreshMqtt(), refreshNetwork(), refreshPosition(), refreshBattery()]);
+  await Promise.all([refreshStatus(), refreshVariables(), refreshMqtt(), refreshNetwork(), refreshPosition(), refreshBattery(), refreshSd()]);
 }
 setInterval(() => { if (!$("#app").classList.contains("hidden")) refreshStatus(); }, 5000);
 

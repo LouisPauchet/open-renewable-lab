@@ -53,6 +53,10 @@ esp_err_t config_store_set_position_settings(const position_settings_t *settings
 void config_store_get_battery_settings(battery_settings_t *out);
 esp_err_t config_store_set_battery_settings(const battery_settings_t *settings);
 
+/* ---- SD card logging format settings ---- */
+void config_store_get_sd_settings(sd_settings_t *out);
+esp_err_t config_store_set_sd_settings(const sd_settings_t *settings);
+
 /* ---- Portal password ---- */
 esp_err_t config_store_set_portal_password(const char *plaintext_password);
 bool config_store_verify_portal_password(const char *plaintext_password);
