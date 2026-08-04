@@ -207,7 +207,10 @@ static void build_group_path(const interval_group_t *g, int64_t timestamp_unix, 
     char interval_suffix[16];
     format_interval_suffix(g->log_interval_ms, interval_suffix, sizeof(interval_suffix));
 
-    char signature[1024];
+    /* static: too large for sd_writer_task's stack (a real stack
+     * overflow, confirmed on real hardware) - safe since this function
+     * is only ever called from that single task, never concurrently. */
+    static char signature[2048];
     build_column_signature(g, signature, sizeof(signature));
     uint32_t sig_hash = fnv1a(signature);
 
@@ -382,7 +385,12 @@ static void rebuild_groups_if_needed(void)
      * flush them first rather than silently losing partial data. */
     flush_all_groups();
 
-    variable_config_t vars[MAX_VARIABLES];
+    /* static: MAX_VARIABLES=32 makes this too large for sd_writer_task's
+     * stack (a real stack overflow, confirmed on real hardware) - safe
+     * since this function is only ever called from that single task,
+     * never concurrently (same reasoning as sampling_engine.c's
+     * rebuild_agg_table(), which hit the identical issue). */
+    static variable_config_t vars[MAX_VARIABLES];
     size_t n = config_store_get_variables(vars, MAX_VARIABLES);
 
     memset(s_groups, 0, sizeof(s_groups));
@@ -595,7 +603,12 @@ esp_err_t sd_logger_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    BaseType_t ok = xTaskCreate(sd_writer_task, "sd_writer", 4096, NULL, tskIDLE_PRIORITY + 2, NULL);
+    /* 6144, not the original 4096: the wide-format code path (see
+     * section 11.1 in DEVELOPER_GUIDE.md) does substantially more
+     * fprintf() work per row than the original long-format writer -
+     * padded for margin on top of fixing the actual large-stack-local
+     * bug that caused a real stack overflow on real hardware. */
+    BaseType_t ok = xTaskCreate(sd_writer_task, "sd_writer", 6144, NULL, tskIDLE_PRIORITY + 2, NULL);
     if (ok != pdPASS) {
         vQueueDelete(s_queue);
         s_queue = NULL;
