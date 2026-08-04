@@ -8,7 +8,6 @@
 #include "config_store.h"
 #include "device_id.h"
 #include "esp_log.h"
-#include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -244,10 +243,18 @@ static void mqtt_publish_task(void *pvParams)
 {
     QueueHandle_t queue = (QueueHandle_t)pvParams;
     uint32_t last_generation = UINT32_MAX;
-    esp_task_wdt_add(NULL);
+    /* Deliberately NOT registered with esp_task_wdt (same reasoning as
+     * sampling_engine.c's bus_scheduler_task): a connect attempt's
+     * backend->init()/connect() now involves several AT-command
+     * round-trips (TLS cert upload, TLS profile, mqttConfig,
+     * mqttConnect) plus up to a 10s wait for the modem's async connect
+     * confirmation, all within one loop iteration - inherently
+     * variable, network-dependent timing that can plausibly exceed
+     * CONFIG_ESP_TASK_WDT_TIMEOUT_S (15s) in the worst case (a fresh
+     * TLS cert upload plus a slow cellular round-trip), which would
+     * panic-reboot the whole device rather than just this task. */
 
     for (;;) {
-        esp_task_wdt_reset();
         aggregate_result_t result;
         bool got_sample = xQueueReceive(queue, &result, pdMS_TO_TICKS(500)) == pdTRUE;
 

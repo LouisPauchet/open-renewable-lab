@@ -192,6 +192,13 @@ static esp_err_t be_connect(void)
      * confirmed on real hardware. Block briefly for it instead. */
     if (!s_mqtt_connect_done || xSemaphoreTake(s_mqtt_connect_done, pdMS_TO_TICKS(10000)) != pdTRUE) {
         ESP_LOGW(TAG, "MQTT connect timed out waiting for broker confirmation");
+        /* Without this, the modem's own MQTT client is left thinking a
+         * connection attempt is still in progress - confirmed on real
+         * hardware: the next retry's mqttConfig() call fails outright
+         * because of it. mqttDisconnect() resets it to a clean
+         * disconnected state so the next init()+connect() actually
+         * starts fresh rather than compounding the stuck state. */
+        modem.mqttDisconnect();
         return ESP_FAIL;
     }
     return s_connected ? ESP_OK : ESP_FAIL;
