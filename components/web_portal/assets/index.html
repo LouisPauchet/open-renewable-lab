@@ -412,7 +412,7 @@ function mqttFormFields(m) {
     </div>
     <label><input type="checkbox" name="use_tls" ${m.use_tls ? "checked" : ""}> Use TLS (MQTTS)</label>
     <label><input type="checkbox" name="tls_allow_insecure" ${m.tls_allow_insecure ? "checked" : ""}> Allow insecure TLS (skip cert validation)</label>
-    <small>WiFi transport: intended for lab/self-signed brokers. Cellular transport: currently required whenever TLS is on - the modem's on-board MQTT client has no way to upload a CA certificate yet, so certificate-validated TLS isn't available over cellular.</small>
+    <small>WiFi transport: intended for lab/self-signed brokers. Cellular transport: certificate validation only works if your broker's certificate is signed by Let's Encrypt (the modem's on-board MQTT client validates against a fixed, built-in Let's Encrypt root - it can't take an arbitrary uploaded certificate yet) - check this box if your broker uses a different CA or a self-signed certificate.</small>
     <div class="row">
       <div><label>Client ID <input name="client_id" value="${m.client_id}"></label></div>
       <div><label>Username <input name="username" value="${m.username}"></label></div>
