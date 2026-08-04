@@ -30,6 +30,8 @@ static const char *TAG = "mqtt_client";
 static const mqttc_backend_vtable_t *s_backend;
 static mqtt_settings_t s_current_settings;
 static bool s_backend_connected;
+static int64_t s_next_reconnect_attempt_us; /* non-batch mode only - see mqtt_publish_task() */
+#define RECONNECT_BACKOFF_US (15 * 1000 * 1000) /* 15s - avoid hammering a broker/modem that's still failing */
 
 static aggregate_result_t s_batch_buffer[MAX_BATCH_ITEMS];
 static size_t s_batch_count;
@@ -63,13 +65,17 @@ static void apply_settings_if_changed(const mqtt_settings_t *cur)
     s_current_settings = *cur;
 
     /* In batch mode, the connection is opened/closed per transmission
-     * window (see mqtt_publish_task) rather than held open here. */
+     * window (see mqtt_publish_task) rather than held open here.
+     * Non-batch mode's actual connect attempt (and retries) happen in
+     * mqtt_publish_task's main loop, not here - a single attempt at
+     * settings-change time isn't enough on its own (e.g. over
+     * cellular, this can run before network registration completes;
+     * confirmed on real hardware), and there was previously no retry
+     * at all if that one attempt failed, since s_current_settings was
+     * already updated to match cur either way. Just prime the retry
+     * loop to attempt promptly. */
     if (cur->enabled && !cur->batch_enabled && strlen(cur->host) > 0) {
-        if (s_backend->init(cur) == ESP_OK && s_backend->connect() == ESP_OK) {
-            ESP_LOGI(TAG, "connecting to %s:%u (tls=%d)", cur->host, cur->port, (int)cur->use_tls);
-        } else {
-            ESP_LOGE(TAG, "failed to start MQTT backend");
-        }
+        s_next_reconnect_attempt_us = 0;
     }
 }
 
@@ -263,6 +269,21 @@ static void mqtt_publish_task(void *pvParams)
         }
 
         if (!s_current_settings.batch_enabled) {
+            int64_t now_us = esp_timer_get_time();
+            if (s_backend && s_current_settings.enabled && !s_backend_connected &&
+                strlen(s_current_settings.host) > 0 && now_us >= s_next_reconnect_attempt_us) {
+                ESP_LOGI(TAG, "connecting to %s:%u (tls=%d, cellular registered=%d pdp_active=%d)",
+                         s_current_settings.host, s_current_settings.port, (int)s_current_settings.use_tls,
+                         (int)cellular_transport_is_registered(), (int)cellular_transport_is_pdp_active());
+                if (s_backend->init(&s_current_settings) == ESP_OK && s_backend->connect() == ESP_OK) {
+                    s_backend_connected = s_backend->is_connected();
+                }
+                if (!s_backend_connected) {
+                    ESP_LOGW(TAG, "failed to start MQTT backend, retrying in %d s", RECONNECT_BACKOFF_US / 1000000);
+                    s_next_reconnect_attempt_us = now_us + RECONNECT_BACKOFF_US;
+                }
+            }
+
             if (got_sample && s_backend && s_backend_connected) {
                 publish_result(&result);
             }
@@ -330,6 +351,7 @@ esp_err_t mqttc_init(void)
     s_backend_connected = false;
     s_batch_count = 0;
     s_next_batch_transmit_us = 0;
+    s_next_reconnect_attempt_us = 0;
 
     s_position_mutex = xSemaphoreCreateMutex();
     if (!s_position_mutex) {
