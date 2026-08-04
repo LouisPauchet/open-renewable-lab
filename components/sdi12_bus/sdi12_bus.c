@@ -8,8 +8,10 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "sdi12_internal.h"
 
 static const char *TAG = "sdi12_bus";
@@ -375,4 +377,44 @@ void sdi12_bus_debug_tx_toggle_test(int cycles, uint32_t half_period_ms)
     ESP_LOGW(TAG, "debug TX toggle test done - RXD loopback saw %" PRIu32 " edge(s) (expect up to %d if the "
                   "receive chain works; 0 means RX_EN/RXD/U6 isn't passing the bus through to the MCU)",
              s_debug_edge_count, cycles * 2);
+}
+
+void sdi12_bus_debug_rx_monitor(uint32_t duration_ms)
+{
+    if (!s_initialized) {
+        ESP_LOGE(TAG, "debug RX monitor: bus not initialized");
+        return;
+    }
+    /* Unlike sdi12_bus_debug_tx_toggle_test(), this never drives TXD/TX_EN
+     * at all - it only listens. Meant for manually driving the SDI-12
+     * DATA line from an external source (e.g. briefly touching it to
+     * 5V and back) to test the RX_EN/RXD/U6 chain in complete isolation
+     * from our own TX circuit (U5), which is already independently
+     * confirmed working. Logs each edge live as it's detected so it can
+     * be correlated with a manual action in real time, rather than only
+     * reporting a final count after the fact. */
+    ESP_LOGW(TAG, "debug RX monitor starting for %" PRIu32 " ms - manually drive the SDI-12 DATA "
+                  "line now (e.g. briefly connect it to 5V and back) and watch for "
+                  "'edge detected' lines below",
+             duration_ms);
+    xSemaphoreTake(s_bus_mutex, portMAX_DELAY);
+
+    s_debug_edge_count = 0;
+    gpio_set_intr_type(BOARD_PIN_SDI12_RXD, GPIO_INTR_ANYEDGE);
+    gpio_intr_enable(BOARD_PIN_SDI12_RXD);
+
+    uint32_t last_count = 0;
+    int64_t start_us = esp_timer_get_time();
+    while ((esp_timer_get_time() - start_us) / 1000 < duration_ms) {
+        uint32_t count = s_debug_edge_count;
+        if (count != last_count) {
+            ESP_LOGW(TAG, "debug RX monitor: edge detected! (total=%" PRIu32 ")", count);
+            last_count = count;
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    gpio_intr_disable(BOARD_PIN_SDI12_RXD);
+    xSemaphoreGive(s_bus_mutex);
+    ESP_LOGW(TAG, "debug RX monitor done - saw %" PRIu32 " edge(s) total", s_debug_edge_count);
 }

@@ -79,6 +79,18 @@ esp_err_t sdi12_variable_read(const variable_config_t *var, double *out_value);
  * enable-pin polarity / TXD-RXD pin assignment is confirmed. */
 void sdi12_bus_debug_tx_toggle_test(int cycles, uint32_t half_period_ms);
 
+/* TEMPORARY hardware bring-up diagnostic - not part of normal
+ * operation, not called anywhere by default. Unlike
+ * sdi12_bus_debug_tx_toggle_test() above, this never drives TXD/TX_EN -
+ * it only enables RX_EN and listens on RXD for `duration_ms`, logging
+ * each edge live as it's detected. Meant for manually driving the
+ * SDI-12 DATA line from an external source (e.g. briefly touching it
+ * to 5V and back) to test the RX_EN/RXD/U6 receive chain in complete
+ * isolation from this board's own TX circuit (U5), which is already
+ * independently confirmed working. Remove once the RX chain fault is
+ * confirmed/located. */
+void sdi12_bus_debug_rx_monitor(uint32_t duration_ms);
+
 #ifdef __cplusplus
 }
 #endif

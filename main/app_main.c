@@ -72,9 +72,10 @@ void app_main(void)
     if (sdi12_bus_init() == ESP_OK) {
         sampling_engine_register_bus_driver(BUS_TYPE_SDI12, sdi12_variable_read);
         /* TEMPORARY hardware bring-up diagnostic - see
-         * sdi12_bus_debug_tx_toggle_test()'s doc comment. Remove once
-         * the SDI-12 TX_EN/RX_EN polarity question is settled. */
-        sdi12_bus_debug_tx_toggle_test(6, 1000);
+         * sdi12_bus_debug_rx_monitor()'s doc comment. Remove once the
+         * SDI-12 RX chain fault is confirmed/located. 30s window gives
+         * time to physically drive the DATA line by hand after boot. */
+        sdi12_bus_debug_rx_monitor(30000);
     } else {
         ESP_LOGW(TAG, "SDI-12 bus unavailable (board_pins.h SDI-12 pins not configured), using stub sensor");
         sampling_engine_register_bus_driver(BUS_TYPE_SDI12, stub_sensor_read);
