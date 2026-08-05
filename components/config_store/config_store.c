@@ -131,6 +131,8 @@ static void config_set_defaults(device_config_t *c)
 
     c->battery.chemistry = BATTERY_CHEM_LI_ION;
     c->battery.cell_count = 1;
+    c->battery.enabled = false;
+    c->battery.interval_ms = 10 * 60 * 1000; /* 10 min */
 
     c->sd.log_format = SD_LOG_FORMAT_LONG;
 
@@ -247,6 +249,8 @@ cJSON *config_store_to_json(const device_config_t *c)
     cJSON *battery = cJSON_AddObjectToObject(root, "battery");
     cJSON_AddNumberToObject(battery, "chemistry", c->battery.chemistry);
     cJSON_AddNumberToObject(battery, "cell_count", c->battery.cell_count);
+    cJSON_AddBoolToObject(battery, "enabled", c->battery.enabled);
+    cJSON_AddNumberToObject(battery, "interval_ms", c->battery.interval_ms);
 
     cJSON *sd = cJSON_AddObjectToObject(root, "sd");
     cJSON_AddNumberToObject(sd, "log_format", c->sd.log_format);
@@ -304,6 +308,8 @@ bool config_store_from_json(const cJSON *root, device_config_t *c)
     if (battery) {
         c->battery.chemistry = (battery_chemistry_t)json_get_int(battery, "chemistry", c->battery.chemistry);
         c->battery.cell_count = (uint8_t)json_get_int(battery, "cell_count", c->battery.cell_count);
+        c->battery.enabled = json_get_bool(battery, "enabled", c->battery.enabled);
+        c->battery.interval_ms = (uint32_t)json_get_int(battery, "interval_ms", (int)c->battery.interval_ms);
     }
 
     const cJSON *sd = cJSON_GetObjectItemCaseSensitive(root, "sd");

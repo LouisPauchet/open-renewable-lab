@@ -1,5 +1,6 @@
 #include <inttypes.h>
 
+#include "battery_monitor.h"
 #include "board_pins.h"
 #include "cellular_transport.h"
 #include "config_store.h"
@@ -90,6 +91,7 @@ void app_main(void)
                       "HDC1080/LPS22HB variables will fail to read");
     }
     ESP_ERROR_CHECK(sampling_engine_init());
+    ESP_ERROR_CHECK(battery_monitor_init());
 
     QueueHandle_t debug_sink = xQueueCreate(16, sizeof(aggregate_result_t));
     ESP_ERROR_CHECK(sampling_engine_add_result_sink(debug_sink));

@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <string.h>
+#include <time.h>
 
 #include "cJSON.h"
 #include "cellular_transport.h"
@@ -15,6 +16,7 @@
 #include "freertos/task.h"
 #include "mqtt_backend.h"
 #include "sampling_engine.h"
+#include "time_sync.h"
 
 static const char *TAG = "mqtt_client";
 
@@ -39,6 +41,10 @@ static int64_t s_next_batch_transmit_us;
 static SemaphoreHandle_t s_position_mutex;
 static gnss_fix_t s_pending_position;
 static bool s_pending_position_valid;
+
+static SemaphoreHandle_t s_battery_mutex;
+static double s_pending_battery_voltage;
+static bool s_pending_battery_valid;
 
 static bool mqtt_settings_equal(const mqtt_settings_t *a, const mqtt_settings_t *b)
 {
@@ -283,6 +289,61 @@ static void maybe_publish_pending_position(void)
     }
 }
 
+static void build_battery_json_payload(double voltage, char *out, size_t out_size)
+{
+    time_t now = time(NULL);
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddNumberToObject(o, "ts", (double)now);
+    cJSON_AddBoolToObject(o, "time_synced", now >= TIME_SYNC_EPOCH_THRESHOLD);
+    cJSON_AddNumberToObject(o, "voltage", voltage);
+
+    char *s = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    if (s) {
+        snprintf(out, out_size, "%s", s);
+        cJSON_free(s);
+    } else {
+        out[0] = '\0';
+    }
+}
+
+static void publish_battery_now(double voltage)
+{
+    char topic[96];
+    if (s_current_settings.flat_telemetry) {
+        snprintf(topic, sizeof(topic), "%s", s_current_settings.topic_prefix);
+    } else {
+        snprintf(topic, sizeof(topic), "%s/%s/battery", s_current_settings.topic_prefix, device_id_get());
+    }
+
+    char payload[128];
+    build_battery_json_payload(voltage, payload, sizeof(payload));
+
+    esp_err_t err = s_backend->publish(topic, payload, 1, false);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "battery publish failed: %s", esp_err_to_name(err));
+    }
+}
+
+/* Publishes the pending battery voltage (if any) - only called while
+ * the caller has already confirmed the backend is connected. */
+static void maybe_publish_pending_battery(void)
+{
+    if (!s_backend || !s_backend_connected || !s_battery_mutex) {
+        return;
+    }
+
+    xSemaphoreTake(s_battery_mutex, portMAX_DELAY);
+    bool have = s_pending_battery_valid;
+    double voltage = s_pending_battery_voltage;
+    s_pending_battery_valid = false;
+    xSemaphoreGive(s_battery_mutex);
+
+    if (have) {
+        publish_battery_now(voltage);
+    }
+}
+
 static void mqtt_publish_task(void *pvParams)
 {
     QueueHandle_t queue = (QueueHandle_t)pvParams;
@@ -339,6 +400,7 @@ static void mqtt_publish_task(void *pvParams)
                 publish_result(&result);
             }
             maybe_publish_pending_position();
+            maybe_publish_pending_battery();
             continue;
         }
 
@@ -384,6 +446,7 @@ static void mqtt_publish_task(void *pvParams)
                 }
                 s_batch_count = 0;
                 maybe_publish_pending_position();
+                maybe_publish_pending_battery();
 
                 s_backend->disconnect();
                 s_backend_connected = false;
@@ -426,6 +489,10 @@ esp_err_t mqttc_init(void)
     if (!s_position_mutex) {
         return ESP_ERR_NO_MEM;
     }
+    s_battery_mutex = xSemaphoreCreateMutex();
+    if (!s_battery_mutex) {
+        return ESP_ERR_NO_MEM;
+    }
 
     QueueHandle_t queue = xQueueCreate(16, sizeof(aggregate_result_t));
     if (!queue) {
@@ -459,5 +526,18 @@ esp_err_t mqttc_publish_position(const gnss_fix_t *fix)
     s_pending_position = *fix;
     s_pending_position_valid = true;
     xSemaphoreGive(s_position_mutex);
+    return ESP_OK; /* actual publish happens from mqtt_publish_task */
+}
+
+esp_err_t mqttc_publish_battery(double voltage)
+{
+    if (!s_battery_mutex) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(s_battery_mutex, portMAX_DELAY);
+    s_pending_battery_voltage = voltage;
+    s_pending_battery_valid = true;
+    xSemaphoreGive(s_battery_mutex);
     return ESP_OK; /* actual publish happens from mqtt_publish_task */
 }

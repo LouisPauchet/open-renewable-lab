@@ -584,6 +584,10 @@ function batteryFormFields(b) {
       </select>
     </label>
     <label>Cell count <input type="number" name="cell_count" min="1" value="${b.cell_count}"></label>
+    <small>Chemistry and cell count only calibrate the voltage reading below (and any "Battery voltage" Variable
+      you add manually) - they don't publish anything on their own.</small>
+    <label><input type="checkbox" name="enabled" ${b.enabled ? "checked" : ""}> Publish battery voltage over MQTT</label>
+    <label>Publish interval (ms) <input type="number" name="interval_ms" min="1000" value="${b.interval_ms}"></label>
     <button type="submit">Save battery settings</button>
   `;
 }
@@ -595,7 +599,10 @@ async function refreshBattery() {
   form.onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    const body = { chemistry: parseInt(fd.get("chemistry"), 10), cell_count: parseInt(fd.get("cell_count"), 10) };
+    const body = {
+      chemistry: parseInt(fd.get("chemistry"), 10), cell_count: parseInt(fd.get("cell_count"), 10),
+      enabled: !!fd.get("enabled"), interval_ms: parseInt(fd.get("interval_ms"), 10),
+    };
     try {
       await api("/api/settings/battery", { method: "PUT", body });
       $("#battery-msg").textContent = "Saved."; $("#battery-msg").className = "msg ok";

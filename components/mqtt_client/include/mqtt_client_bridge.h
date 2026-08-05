@@ -39,6 +39,12 @@ bool mqttc_is_ready(void);
  * one is sent. */
 esp_err_t mqttc_publish_position(const gnss_fix_t *fix);
 
+/* Queues a battery voltage reading for publish to
+ * "<topic_prefix>/<device_id>/battery" (or the literal topic_prefix
+ * under mqtt.flat_telemetry) - same batching/most-recent-wins behavior
+ * as mqttc_publish_position() above. See battery_monitor.c. */
+esp_err_t mqttc_publish_battery(double voltage);
+
 #ifdef __cplusplus
 }
 #endif

@@ -135,6 +135,14 @@ typedef struct {
      * ltc4015.c for the scale-factor math and its sourcing. */
     battery_chemistry_t chemistry;
     uint8_t cell_count;
+
+    /* Independent of the above: periodically publish battery voltage
+     * over MQTT, the same enabled/interval_ms shape as
+     * position_settings_t above - a dedicated toggle rather than
+     * requiring a manually-added Variable (I2C/LTC4015/VBAT) for
+     * something this common. See battery_monitor.c. */
+    bool enabled;
+    uint32_t interval_ms;
 } battery_settings_t;
 
 typedef enum {
