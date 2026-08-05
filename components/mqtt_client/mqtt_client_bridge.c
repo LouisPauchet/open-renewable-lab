@@ -126,31 +126,37 @@ static void build_json_payload(const aggregate_result_t *r, char *out, size_t ou
  * expect on their single fixed device telemetry topic - as opposed to
  * build_json_payload()'s generic {"mean":...,"stddev":...} shape, which
  * needs a distinct topic per variable (the topic itself carries the
- * variable name) to stay unambiguous. */
-static void build_flat_json_payload(const aggregate_result_t *r, char *out, size_t out_size)
+ * variable name) to stay unambiguous. Shared by both the non-batch
+ * single-result payload and the batch array payload below. */
+static void add_flat_keys(cJSON *target, const aggregate_result_t *r)
 {
-    cJSON *o = cJSON_CreateObject();
     char key[40];
     if (r->aggregate_mask & AGG_RAW) {
         snprintf(key, sizeof(key), "%s_raw", r->name);
-        cJSON_AddNumberToObject(o, key, r->raw);
+        cJSON_AddNumberToObject(target, key, r->raw);
     }
     if (r->aggregate_mask & AGG_MEAN) {
         snprintf(key, sizeof(key), "%s_mean", r->name);
-        cJSON_AddNumberToObject(o, key, r->mean);
+        cJSON_AddNumberToObject(target, key, r->mean);
     }
     if (r->aggregate_mask & AGG_MIN) {
         snprintf(key, sizeof(key), "%s_min", r->name);
-        cJSON_AddNumberToObject(o, key, r->min);
+        cJSON_AddNumberToObject(target, key, r->min);
     }
     if (r->aggregate_mask & AGG_MAX) {
         snprintf(key, sizeof(key), "%s_max", r->name);
-        cJSON_AddNumberToObject(o, key, r->max);
+        cJSON_AddNumberToObject(target, key, r->max);
     }
     if (r->aggregate_mask & AGG_STDDEV) {
         snprintf(key, sizeof(key), "%s_stddev", r->name);
-        cJSON_AddNumberToObject(o, key, r->stddev);
+        cJSON_AddNumberToObject(target, key, r->stddev);
     }
+}
+
+static void build_flat_json_payload(const aggregate_result_t *r, char *out, size_t out_size)
+{
+    cJSON *o = cJSON_CreateObject();
+    add_flat_keys(o, r);
 
     char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
@@ -160,6 +166,44 @@ static void build_flat_json_payload(const aggregate_result_t *r, char *out, size
     } else {
         out[0] = '\0';
     }
+}
+
+/* ThingsBoard's "upload historical telemetry" format - a JSON array of
+ * {"ts": <ms since epoch>, "values": {...}} objects, one per buffered
+ * sample - as opposed to the plain {"key":value} "current telemetry"
+ * shape build_flat_json_payload() above produces, which has no room for
+ * a device-supplied timestamp and would let the broker's own receipt
+ * time silently stand in for it. That's fine for non-batch mode
+ * (publishing happens within the same second it was sampled), but wrong
+ * once batching delays transmission by up to batch_interval_ms - the
+ * whole point of batching is to send several intervals' worth of
+ * samples at once, so each one needs its own real timestamp.
+ *
+ * Returns a cJSON_free()-able string (not sized-buffer-bounded, since a
+ * full batch of MAX_BATCH_ITEMS could exceed any reasonable fixed
+ * buffer) or NULL on allocation failure. Note: still bounded in
+ * practice by whatever payload size the MQTT backend/broker accepts in
+ * one publish (the Sequans modem in particular can reject an
+ * oversized one) - size batch_interval_ms/variable count with this in
+ * mind, same as MAX_BATCH_ITEMS's own sizing note above. */
+static char *build_batch_array_payload(void)
+{
+    cJSON *arr = cJSON_CreateArray();
+    for (size_t i = 0; i < s_batch_count; i++) {
+        const aggregate_result_t *r = &s_batch_buffer[i];
+        cJSON *entry = cJSON_CreateObject();
+        /* ThingsBoard's ts is milliseconds since epoch; our own
+         * timestamp_unix (get_wall_clock() in sampling_engine.c) is
+         * seconds. */
+        cJSON_AddNumberToObject(entry, "ts", (double)r->timestamp_unix * 1000.0);
+        cJSON *values = cJSON_AddObjectToObject(entry, "values");
+        add_flat_keys(values, r);
+        cJSON_AddItemToArray(arr, entry);
+    }
+
+    char *s = cJSON_PrintUnformatted(arr);
+    cJSON_Delete(arr);
+    return s;
 }
 
 static void publish_result(const aggregate_result_t *r)
@@ -317,8 +361,26 @@ static void mqtt_publish_task(void *pvParams)
 
             if (s_backend_connected) {
                 ESP_LOGI(TAG, "batch transmit window: sending %u buffered sample(s)", (unsigned)s_batch_count);
-                for (size_t i = 0; i < s_batch_count; i++) {
-                    publish_result(&s_batch_buffer[i]);
+                if (s_current_settings.flat_telemetry) {
+                    /* One combined ThingsBoard-style timestamped array,
+                     * not one publish per sample - see
+                     * build_batch_array_payload()'s doc comment. */
+                    char *payload = build_batch_array_payload();
+                    if (payload) {
+                        char topic[128];
+                        snprintf(topic, sizeof(topic), "%s", s_current_settings.topic_prefix);
+                        esp_err_t err = s_backend->publish(topic, payload, 1, false);
+                        if (err != ESP_OK) {
+                            ESP_LOGW(TAG, "batch publish failed: %s", esp_err_to_name(err));
+                        }
+                        cJSON_free(payload);
+                    } else {
+                        ESP_LOGW(TAG, "batch publish: failed to build payload (out of memory?)");
+                    }
+                } else {
+                    for (size_t i = 0; i < s_batch_count; i++) {
+                        publish_result(&s_batch_buffer[i]);
+                    }
                 }
                 s_batch_count = 0;
                 maybe_publish_pending_position();
