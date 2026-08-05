@@ -254,6 +254,7 @@ static esp_err_t battery_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(o, "cell_count", b.cell_count);
     cJSON_AddBoolToObject(o, "enabled", b.enabled);
     cJSON_AddNumberToObject(o, "interval_ms", b.interval_ms);
+    cJSON_AddBoolToObject(o, "sync_with_mqtt", b.sync_with_mqtt);
     return wp_send_json(req, o);
 }
 
@@ -276,12 +277,13 @@ static esp_err_t battery_put_handler(httpd_req_t *req)
     b.cell_count = (uint8_t)json_int(body, "cell_count", current.cell_count);
     b.enabled = json_bool(body, "enabled", current.enabled);
     b.interval_ms = (uint32_t)json_int(body, "interval_ms", (int)current.interval_ms);
+    b.sync_with_mqtt = json_bool(body, "sync_with_mqtt", current.sync_with_mqtt);
     cJSON_Delete(body);
 
     if (b.cell_count == 0) {
         return wp_send_error(req, "400 Bad Request", "cell_count must be > 0");
     }
-    if (b.enabled && b.interval_ms == 0) {
+    if (b.enabled && !b.sync_with_mqtt && b.interval_ms == 0) {
         return wp_send_error(req, "400 Bad Request", "interval_ms must be > 0 when enabled");
     }
 

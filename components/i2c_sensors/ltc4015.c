@@ -31,6 +31,9 @@
 #define LTC4015_REG_IBAT 0x3D
 #define LTC4015_REG_DIE_TEMP 0x3F
 
+#define LTC4015_REG_CONFIG_BITS 0x14
+#define LTC4015_CONFIG_FORCE_MEAS_SYS_ON (1u << 4)
+
 /* Battery-current sense resistor on the Walter Feels schematic - a
  * fixed board constant (unlike chemistry/cell count, which vary by
  * deployment and are configurable). */
@@ -57,11 +60,56 @@ static esp_err_t ltc4015_read_reg16(uint8_t i2c_addr, uint8_t reg, uint16_t *out
     return ESP_OK;
 }
 
+static esp_err_t ltc4015_write_reg16(uint8_t i2c_addr, uint8_t reg, uint16_t value)
+{
+    uint8_t buf[3] = { reg, (uint8_t)(value & 0xFF), (uint8_t)(value >> 8) }; /* SMBus word: low byte first */
+    return i2c_bus_write(i2c_addr, buf, sizeof(buf), 100);
+}
+
+/* By default the LTC4015's A/D measurement system only runs while
+ * input power is present (VIN > VBAT) - telemetry registers (VBAT
+ * included) sit at their power-on-reset value of 0 the rest of the
+ * time, confirmed against the datasheet (4015fb, CONFIG_BITS
+ * sub-address 0x14) and matching a real "battery voltage always reads
+ * 0 V" report on real hardware with a genuine battery connected but no
+ * active charging input. force_meas_sys_on (bit 4) makes the ADC run
+ * continuously regardless of input power - the right tradeoff for a
+ * monitoring application (a small increase in the LTC4015's own
+ * battery-only quiescent draw, not the sensor node's overall power
+ * budget). Read-modify-write so as not to disturb other CONFIG_BITS
+ * (e.g. suspend_charger, mppt_en_i2c) this driver never otherwise
+ * touches. Checked once per boot, not on every read - if the LTC4015
+ * itself loses and regains power independently of the ESP32 (VIN and
+ * battery both briefly absent), this bit would reset and telemetry
+ * would go back to reading 0 until the next reboot; a full LTC4015
+ * power-cycle while the ESP32 stays up is enough of an edge case that
+ * re-checking on every single read isn't worth doubling I2C traffic
+ * for. */
+static bool s_meas_sys_checked;
+static void ensure_measurement_system_enabled(uint8_t i2c_addr)
+{
+    if (s_meas_sys_checked) {
+        return;
+    }
+    s_meas_sys_checked = true;
+
+    uint16_t config;
+    if (ltc4015_read_reg16(i2c_addr, LTC4015_REG_CONFIG_BITS, &config) != ESP_OK) {
+        return; /* LTC4015 not present/reachable - nothing to fix, the actual telemetry read below will fail too */
+    }
+    if (config & LTC4015_CONFIG_FORCE_MEAS_SYS_ON) {
+        return; /* already set */
+    }
+    ltc4015_write_reg16(i2c_addr, LTC4015_REG_CONFIG_BITS, config | LTC4015_CONFIG_FORCE_MEAS_SYS_ON);
+}
+
 esp_err_t ltc4015_read_channel(uint8_t i2c_addr, uint8_t channel, double *out_value)
 {
     if (!out_value) {
         return ESP_ERR_INVALID_ARG;
     }
+
+    ensure_measurement_system_enabled(i2c_addr);
 
     uint16_t raw;
     esp_err_t err;

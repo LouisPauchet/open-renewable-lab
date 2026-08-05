@@ -143,6 +143,16 @@ typedef struct {
      * something this common. See battery_monitor.c. */
     bool enabled;
     uint32_t interval_ms;
+
+    /* If true, ignore interval_ms and instead report the latest
+     * reading alongside every regular MQTT publish (each non-batch
+     * publish, or each batch transmit window) rather than on its own
+     * independent timer - useful so battery voltage always accompanies
+     * the rest of the telemetry instead of drifting in and out of sync
+     * with it. The sensor is still polled on a short fixed cadence
+     * internally so the reading handed to each publish is fresh - see
+     * battery_monitor.c. */
+    bool sync_with_mqtt;
 } battery_settings_t;
 
 typedef enum {
