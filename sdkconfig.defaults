@@ -35,17 +35,6 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 # API/MQTT payloads. Its own Kconfig (CJSON_NESTING_LIMIT/
 # CJSON_CIRCULAR_LIMIT) defaults are fine as-is.
 
-# Raises the compiled-in log ceiling to DEBUG (CONFIG_LOG_DEFAULT_LEVEL
-# stays INFO, so nothing gets noisier by default) so ESP_LOGD calls
-# aren't compiled out entirely - specifically dptechnics/walter-modem's
-# own WalterModem.cpp "TX: .../RX: ..." raw AT command/response trace,
-# selectively enabled at runtime for just that tag in
-# cellular_transport_init() (esp_log_level_set("WalterModem",
-# ESP_LOG_DEBUG)) to debug a real "definePDPContext failed" on real
-# hardware with no other information to go on.
-# CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT is not set
-CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
-
 # Heap corruption diagnostics: wraps every heap allocation with canary
 # bytes checked on free/realloc, so a buffer overflow (or an
 # undersized-stack task overrunning into an adjacent heap block) panics

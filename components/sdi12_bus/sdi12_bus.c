@@ -8,10 +8,8 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
-#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "freertos/task.h"
 #include "sdi12_internal.h"
 
 static const char *TAG = "sdi12_bus";
@@ -26,12 +24,10 @@ static const char *TAG = "sdi12_bus";
 static bool s_initialized;
 static SemaphoreHandle_t s_bus_mutex;
 static SemaphoreHandle_t s_edge_sem;
-static volatile uint32_t s_debug_edge_count; /* diagnostic only - see sdi12_bus_debug_tx_toggle_test() */
 
 static void IRAM_ATTR sdi12_gpio_isr(void *arg)
 {
     (void)arg;
-    s_debug_edge_count++;
     BaseType_t higher_prio_woken = pdFALSE;
     xSemaphoreGiveFromISR(s_edge_sem, &higher_prio_woken);
     if (higher_prio_woken) {
@@ -62,12 +58,7 @@ static void tx_char(char c)
     /* SDI-12's character framing is 7E1: 7 data bits, EVEN parity, 1
      * stop bit (confirmed against the spec and multiple independent
      * implementations, e.g. EnviroDIY/Arduino-SDI-12 and
-     * ESPSoftwareSerial-based SDI-12 drivers using SWSERIAL_7E1). A
-     * previous change to this line briefly (and incorrectly) claimed
-     * SDI-12 needs odd parity - it does not; that was a mistake, not a
-     * verified fact, and has been reverted. The real cause of the
-     * total non-response on real hardware was the RX signal path
-     * (RX_EN/RXD/U6), not parity - see sdi12_bus_debug_tx_toggle_test(). */
+     * ESPSoftwareSerial-based SDI-12 drivers using SWSERIAL_7E1). */
     int parity = (ones % 2 == 0) ? 0 : 1; /* even parity: total 1-bits (data+parity) must be even */
 
     tx_bit(0); /* start bit (space) */
@@ -349,81 +340,4 @@ esp_err_t sdi12_read_data(char addr, uint8_t data_index, char *resp_buf, size_t 
     char body[4];
     snprintf(body, sizeof(body), "D%u", (unsigned)(data_index % 10));
     return sdi12_send_command(addr, body, resp_buf, resp_buf_len, 200);
-}
-
-void sdi12_bus_debug_tx_toggle_test(int cycles, uint32_t half_period_ms)
-{
-    if (!s_initialized) {
-        ESP_LOGE(TAG, "debug TX toggle test: bus not initialized");
-        return;
-    }
-    ESP_LOGW(TAG, "debug TX toggle test starting: %d cycles, %" PRIu32 " ms/half-cycle - "
-                  "watch the SDI-12 DATA line with a meter now", cycles, half_period_ms);
-    xSemaphoreTake(s_bus_mutex, portMAX_DELAY);
-
-    /* RX_EN is already permanently enabled (sdi12_bus_init()) - if the
-     * receive chain (U6/RX_EN/RXD wiring+GPIO config) works at all, our
-     * own TXD transitions on the shared bus should be visible as edges
-     * on RXD too (a loopback self-test). GPIO_INTR_ANYEDGE (not the
-     * normal rx_char()'s POSEDGE-only) to catch both directions of this
-     * slow toggle. */
-    s_debug_edge_count = 0;
-    gpio_set_intr_type(BOARD_PIN_SDI12_RXD, GPIO_INTR_ANYEDGE);
-    gpio_intr_enable(BOARD_PIN_SDI12_RXD);
-
-    gpio_set_level(BOARD_PIN_SDI12_TX_EN, 1); /* enable the TX buffer onto the bus */
-    for (int i = 0; i < cycles; i++) {
-        gpio_set_level(BOARD_PIN_SDI12_TXD, 1);
-        vTaskDelay(pdMS_TO_TICKS(half_period_ms));
-        gpio_set_level(BOARD_PIN_SDI12_TXD, 0);
-        vTaskDelay(pdMS_TO_TICKS(half_period_ms));
-    }
-    gpio_set_level(BOARD_PIN_SDI12_TXD, 0); /* idle = marking = LOW */
-    gpio_set_level(BOARD_PIN_SDI12_TX_EN, 0); /* back to high-Z */
-
-    gpio_intr_disable(BOARD_PIN_SDI12_RXD);
-    xSemaphoreGive(s_bus_mutex);
-    ESP_LOGW(TAG, "debug TX toggle test done - RXD loopback saw %" PRIu32 " edge(s) (expect up to %d if the "
-                  "receive chain works; 0 means RX_EN/RXD/U6 isn't passing the bus through to the MCU)",
-             s_debug_edge_count, cycles * 2);
-}
-
-void sdi12_bus_debug_rx_monitor(uint32_t duration_ms)
-{
-    if (!s_initialized) {
-        ESP_LOGE(TAG, "debug RX monitor: bus not initialized");
-        return;
-    }
-    /* Unlike sdi12_bus_debug_tx_toggle_test(), this never drives TXD/TX_EN
-     * at all - it only listens. Meant for manually driving the SDI-12
-     * DATA line from an external source (e.g. briefly touching it to
-     * 5V and back) to test the RX_EN/RXD/U6 chain in complete isolation
-     * from our own TX circuit (U5), which is already independently
-     * confirmed working. Logs each edge live as it's detected so it can
-     * be correlated with a manual action in real time, rather than only
-     * reporting a final count after the fact. */
-    ESP_LOGW(TAG, "debug RX monitor starting for %" PRIu32 " ms - manually drive the SDI-12 DATA "
-                  "line now (e.g. briefly connect it to 5V and back) and watch for "
-                  "'edge detected' lines below",
-             duration_ms);
-    xSemaphoreTake(s_bus_mutex, portMAX_DELAY);
-
-    s_debug_edge_count = 0;
-    gpio_set_intr_type(BOARD_PIN_SDI12_RXD, GPIO_INTR_ANYEDGE);
-    gpio_intr_enable(BOARD_PIN_SDI12_RXD);
-
-    uint32_t last_count = 0;
-    int64_t start_us = esp_timer_get_time();
-    while ((esp_timer_get_time() - start_us) / 1000 < duration_ms) {
-        uint32_t count = s_debug_edge_count;
-        if (count != last_count) {
-            ESP_LOGW(TAG, "debug RX monitor: edge detected! (total=%" PRIu32 ")", count);
-            last_count = count;
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-
-    gpio_intr_disable(BOARD_PIN_SDI12_RXD);
-    xSemaphoreGive(s_bus_mutex);
-    ESP_LOGW(TAG, "debug RX monitor done - saw %" PRIu32 " edge(s) total", s_debug_edge_count);
 }

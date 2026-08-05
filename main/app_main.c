@@ -71,13 +71,6 @@ void app_main(void)
 
     if (sdi12_bus_init() == ESP_OK) {
         sampling_engine_register_bus_driver(BUS_TYPE_SDI12, sdi12_variable_read);
-        /* TEMPORARY hardware bring-up diagnostic - see
-         * sdi12_bus_debug_tx_toggle_test()'s doc comment. Verifying the
-         * RS485_RX_EN/RS232_RX_EN bus-contention fix in
-         * sdi12_bus_init() - the self-contained loopback test is faster
-         * to check than the manual sdi12_bus_debug_rx_monitor() one.
-         * Remove once confirmed. */
-        sdi12_bus_debug_tx_toggle_test(6, 1000);
     } else {
         ESP_LOGW(TAG, "SDI-12 bus unavailable (board_pins.h SDI-12 pins not configured), using stub sensor");
         sampling_engine_register_bus_driver(BUS_TYPE_SDI12, stub_sensor_read);
