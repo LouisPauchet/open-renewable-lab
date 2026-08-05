@@ -77,6 +77,53 @@ static void recover_stuck_bus(gpio_num_t sda, gpio_num_t scl)
     ESP_LOGW(TAG, "I2C bus recovery %s", gpio_get_level(sda) ? "succeeded" : "failed - SDA still held low");
 }
 
+static esp_err_t create_master_bus(void)
+{
+    i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = BOARD_I2C_PORT,
+        .sda_io_num = BOARD_PIN_I2C_SDA,
+        .scl_io_num = BOARD_PIN_I2C_SCL,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    return i2c_new_master_bus(&bus_cfg, &s_bus);
+}
+
+/* Caller must hold s_mutex. A device getting wedged mid-transaction
+ * during normal runtime (not just at boot, see recover_stuck_bus()
+ * above) is a real, repeatable failure mode on real hardware -
+ * confirmed via a live multimeter reading showing SDA held at 0V
+ * while SCL sat at its normal idle-high level, minutes into uptime,
+ * well after boot's one-shot recovery already ran and found nothing
+ * wrong yet. A plain retry never recovers from this since the bus
+ * stays wedged until something forces the stuck device to release it
+ * - previously required a full power cycle. Called whenever a
+ * transaction actually times out (as opposed to a clean NACK, which
+ * just means "no device answered" and doesn't indicate a wedged bus). */
+static void reset_bus_locked(void)
+{
+    ESP_LOGW(TAG, "I2C transaction timeout - resetting bus");
+
+    for (int i = 0; i < MAX_CACHED_DEVICES; i++) {
+        if (s_devices[i].in_use) {
+            i2c_master_bus_rm_device(s_devices[i].handle);
+        }
+    }
+    memset(s_devices, 0, sizeof(s_devices));
+
+    i2c_del_master_bus(s_bus);
+    s_bus = NULL;
+
+    recover_stuck_bus(BOARD_PIN_I2C_SDA, BOARD_PIN_I2C_SCL);
+
+    esp_err_t err = create_master_bus();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C bus reset failed: %s - I2C disabled until next reboot", esp_err_to_name(err));
+        s_initialized = false;
+    }
+}
+
 esp_err_t i2c_bus_init(void)
 {
     if (!board_pin_is_set(BOARD_PIN_I2C_SDA) || !board_pin_is_set(BOARD_PIN_I2C_SCL)) {
@@ -99,16 +146,7 @@ esp_err_t i2c_bus_init(void)
 
     recover_stuck_bus(BOARD_PIN_I2C_SDA, BOARD_PIN_I2C_SCL);
 
-    i2c_master_bus_config_t bus_cfg = {
-        .i2c_port = BOARD_I2C_PORT,
-        .sda_io_num = BOARD_PIN_I2C_SDA,
-        .scl_io_num = BOARD_PIN_I2C_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-
-    esp_err_t err = i2c_new_master_bus(&bus_cfg, &s_bus);
+    esp_err_t err = create_master_bus();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "i2c_new_master_bus failed: %s", esp_err_to_name(err));
         return err;
@@ -176,6 +214,9 @@ esp_err_t i2c_bus_write(uint8_t addr7, const uint8_t *wbuf, size_t wlen, uint32_
     esp_err_t err = get_or_add_device(addr7, &handle);
     if (err == ESP_OK) {
         err = i2c_master_transmit(handle, wbuf, wlen, (int)timeout_ms);
+        if (err == ESP_ERR_TIMEOUT) {
+            reset_bus_locked();
+        }
     }
     xSemaphoreGive(s_mutex);
     return err;
@@ -193,6 +234,9 @@ esp_err_t i2c_bus_write_read(uint8_t addr7, const uint8_t *wbuf, size_t wlen, ui
     esp_err_t err = get_or_add_device(addr7, &handle);
     if (err == ESP_OK) {
         err = i2c_master_transmit_receive(handle, wbuf, wlen, rbuf, rlen, (int)timeout_ms);
+        if (err == ESP_ERR_TIMEOUT) {
+            reset_bus_locked();
+        }
     }
     xSemaphoreGive(s_mutex);
     return err;
@@ -207,8 +251,14 @@ esp_err_t i2c_bus_scan(uint8_t *found, size_t max_found, size_t *out_count)
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     size_t n = 0;
     for (uint8_t addr = 0x03; addr <= 0x77 && n < max_found; addr++) {
-        if (i2c_master_probe(s_bus, addr, 50) == ESP_OK) {
+        if (!s_initialized) {
+            break; /* reset_bus_locked() gave up - see its own log line for why */
+        }
+        esp_err_t probe_err = i2c_master_probe(s_bus, addr, 50);
+        if (probe_err == ESP_OK) {
             found[n++] = addr;
+        } else if (probe_err == ESP_ERR_TIMEOUT) {
+            reset_bus_locked();
         }
     }
     xSemaphoreGive(s_mutex);
