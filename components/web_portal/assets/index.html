@@ -26,6 +26,15 @@
   .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .25rem .75rem; font-size: .85rem; }
   .status-grid div:nth-child(odd) { opacity: .7; }
   small { opacity: .7; }
+  /* In-page alert/confirm replacement - iOS's captive-portal browser
+     (Captive Network Assistant) runs pages in a restricted WKWebView
+     that silently suppresses native alert()/confirm()/prompt() dialogs,
+     so those can't be relied on here. */
+  #modal-overlay { display: none; position: fixed; inset: 0; background: #0008; align-items: center; justify-content: center; z-index: 1000; }
+  #modal-overlay.show { display: flex; }
+  #modal-box { background: Canvas; color: CanvasText; border: 1px solid #8884; border-radius: 8px; padding: 1rem 1.25rem; max-width: 320px; width: 90%; box-shadow: 0 4px 20px #0006; }
+  #modal-msg { font-size: .9rem; margin-bottom: .75rem; white-space: pre-wrap; }
+  #modal-buttons { display: flex; justify-content: flex-end; gap: .5rem; }
 </style>
 </head>
 <body>
@@ -95,8 +104,41 @@
   <button id="reboot-btn">Reboot device</button>
 </main>
 
+<div id="modal-overlay">
+  <div id="modal-box">
+    <div id="modal-msg"></div>
+    <div id="modal-buttons">
+      <button id="modal-cancel-btn" type="button">Cancel</button>
+      <button id="modal-ok-btn" type="button">OK</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = (sel, el) => (el || document).querySelector(sel);
+
+/* alert()/confirm() replacements - see #modal-overlay's CSS comment for
+   why native dialogs aren't used here. */
+function showModal(message, showCancel) {
+  return new Promise((resolve) => {
+    $("#modal-msg").textContent = message;
+    $("#modal-cancel-btn").classList.toggle("hidden", !showCancel);
+    $("#modal-overlay").classList.add("show");
+    const okBtn = $("#modal-ok-btn"), cancelBtn = $("#modal-cancel-btn");
+    const cleanup = (result) => {
+      $("#modal-overlay").classList.remove("show");
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+  });
+}
+function uiAlert(message) { return showModal(message, false); }
+function uiConfirm(message) { return showModal(message, true); }
 const AGG_BITS = [ ["raw", 1], ["mean", 2], ["min", 4], ["max", 8], ["stddev", 16] ];
 const ADS111X_CHANNEL_LABELS = {
   0: "AIN0-AIN1", 1: "AIN0-AIN3", 2: "AIN1-AIN3", 3: "AIN2-AIN3",
@@ -389,12 +431,12 @@ async function refreshVariables() {
     tr.querySelector('[data-act=preview]').addEventListener("click", async () => {
       try {
         const r = await api("/api/variables/" + v.id + "/preview", { method: "POST" });
-        alert(v.name + " = " + r.value);
-      } catch (err) { alert("Preview failed: " + err.message); }
+        await uiAlert(v.name + " = " + r.value);
+      } catch (err) { await uiAlert("Preview failed: " + err.message); }
     });
     tr.querySelector('[data-act=edit]').addEventListener("click", () => openVariableForm(v, v.id));
     tr.querySelector('[data-act=delete]').addEventListener("click", async () => {
-      if (!confirm("Delete variable '" + v.name + "'?")) return;
+      if (!(await uiConfirm("Delete variable '" + v.name + "'?"))) return;
       await api("/api/variables/" + v.id, { method: "DELETE" });
       await refreshVariables();
     });
@@ -633,9 +675,9 @@ $("#import-file").addEventListener("change", async (e) => {
 
 /* ---- reboot ---- */
 $("#reboot-btn").addEventListener("click", async () => {
-  if (!confirm("Reboot the device now?")) return;
+  if (!(await uiConfirm("Reboot the device now?"))) return;
   await api("/api/system/reboot", { method: "POST" }).catch(() => {});
-  alert("Rebooting. Reconnect to the portal in a moment.");
+  await uiAlert("Rebooting. Reconnect to the portal in a moment.");
 });
 
 async function refreshAll() {
