@@ -19,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "time_sync.h"
 
 static const char *TAG = "cellular_transport";
 
@@ -82,6 +83,27 @@ static void cellular_task(void *pvParams)
         WalterModemNetworkRegState reg_state = modem.getNetworkRegState();
         s_registered = (reg_state == WALTER_MODEM_NETWORK_REG_REGISTERED_HOME ||
                         reg_state == WALTER_MODEM_NETWORK_REG_REGISTERED_ROAMING);
+
+        /* Time sync: GNSS (gnss_position.c) is the preferred source
+         * whenever position reporting is enabled - a satellite-derived
+         * timestamp, at least as accurate as the network's NITZ time.
+         * When position reporting is off (so nothing else is ever
+         * going to sync the clock on cellular), fall back to the
+         * modem's own network-derived clock (AT+CCLK?) instead. Cheap
+         * to poll every tick until synced - it's a local AT command to
+         * the modem, no extra network round-trip beyond what NITZ
+         * already did on the modem's own side at registration time. */
+        if (s_registered && !time_sync_is_synced()) {
+            position_settings_t pos;
+            config_store_get_position_settings(&pos);
+            if (!pos.enabled) {
+                WalterModemRsp rsp;
+                if (modem.getClock(&rsp) && rsp.data.clock.epochTime > 0) {
+                    time_sync_set_from_epoch(rsp.data.clock.epochTime, "cellular NITZ");
+                }
+            }
+        }
+
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }

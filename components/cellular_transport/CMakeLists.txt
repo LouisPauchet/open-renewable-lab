@@ -37,5 +37,5 @@ endif()
 idf_component_register(
     SRCS "cellular_transport.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES config_store freertos ${walter_modem_req} ${walter_modem_transitive_req}
+    REQUIRES config_store freertos time_sync ${walter_modem_req} ${walter_modem_transitive_req}
 )

@@ -35,6 +35,14 @@ static void gnss_position_task(void *pvParams)
         esp_err_t err = cellular_transport_acquire_gnss_fix(&fix, GNSS_FIX_TIMEOUT_MS);
         if (err == ESP_OK && fix.valid) {
             bool time_synced = fix.timestamp_unix >= TIME_SYNC_EPOCH_THRESHOLD;
+            if (time_synced) {
+                /* GNSS is the preferred time source whenever position
+                 * reporting is enabled (see cellular_transport.cpp's
+                 * cellular_task() for the NITZ fallback used when it
+                 * isn't) - a satellite-derived timestamp, no less
+                 * accurate than what NITZ would give. */
+                time_sync_set_from_epoch(fix.timestamp_unix, "GNSS");
+            }
             ESP_LOGI(TAG, "fix: lat=%.6f lon=%.6f alt=%.1fm", fix.latitude, fix.longitude, fix.altitude_m);
             sd_logger_log_position(fix.timestamp_unix, time_synced, fix.latitude, fix.longitude, fix.altitude_m);
             mqttc_publish_position(&fix);

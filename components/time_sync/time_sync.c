@@ -1,5 +1,6 @@
 #include "time_sync.h"
 
+#include <sys/time.h>
 #include <time.h>
 
 #include "esp_log.h"
@@ -29,4 +30,14 @@ esp_err_t time_sync_init(void)
 bool time_sync_is_synced(void)
 {
     return time(NULL) >= TIME_SYNC_EPOCH_THRESHOLD;
+}
+
+void time_sync_set_from_epoch(int64_t epoch_unix, const char *source)
+{
+    if (epoch_unix < TIME_SYNC_EPOCH_THRESHOLD) {
+        return;
+    }
+    struct timeval tv = { .tv_sec = (time_t)epoch_unix, .tv_usec = 0 };
+    settimeofday(&tv, NULL);
+    ESP_LOGI(TAG, "system time synchronized via %s", source);
 }
