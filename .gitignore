@@ -5,3 +5,15 @@ managed_components/
 dependencies.lock
 *.pyc
 .DS_Store
+
+# Editor/tooling - machine- and session-specific (idf.portWin has
+# already changed COM port multiple times in one session alone; not
+# something to commit as if it were a fixed project setting).
+.vscode/
+
+# KiCad's own local backup/history mechanisms - redundant with git's
+# own version history, and VS Code's "Local History" extension backup
+# folder embeds its own separate .git repo, which git add would mishandle
+# alongside this project's actual repo.
+hardware/**/*-backups/
+hardware/**/.history/
