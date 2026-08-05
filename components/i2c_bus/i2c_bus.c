@@ -6,8 +6,10 @@
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 static const char *TAG = "i2c_bus";
 
@@ -23,6 +25,57 @@ static bool s_initialized;
 static i2c_master_bus_handle_t s_bus;
 static device_entry_t s_devices[MAX_CACHED_DEVICES];
 static SemaphoreHandle_t s_mutex;
+
+/* If a downstream device was left holding SDA low mid-transaction (a
+ * brief power glitch on the switched I2C rail during a reboot
+ * interrupting it mid-byte is the leading suspect - GPIO0 doubles as
+ * both the 3V3_SW rail enable and the boot-strap pin, so its state
+ * isn't guaranteed for the first few instructions of a reset), the
+ * shared, open-drain I2C bus stays wedged for every device on it -
+ * i2c_master_probe()/transmit() calls all time out forever, for every
+ * single address, confirmed on real hardware (a full bus scan timing
+ * out address-by-address after a reboot, reproduced even on firmware
+ * predating any of this session's own I2C-adjacent changes). Nothing
+ * short of forcing the stuck device to finish its transaction and
+ * release the bus recovers from this - clock SCL manually (up to 9
+ * pulses, enough for a full byte + ack) before the I2C peripheral
+ * driver claims these pins, standard I2C bus-recovery practice, then
+ * issue a manual STOP condition so every device's own bus-protocol
+ * state machine resets cleanly, not just the one that was stuck. */
+static void recover_stuck_bus(gpio_num_t sda, gpio_num_t scl)
+{
+    gpio_config_t od_conf = {
+        .pin_bit_mask = board_pin_bit_mask(sda) | board_pin_bit_mask(scl),
+        .mode = GPIO_MODE_INPUT_OUTPUT_OD,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&od_conf);
+    gpio_set_level(sda, 1); /* release - let the pull-up show the real state */
+    gpio_set_level(scl, 1);
+    esp_rom_delay_us(5);
+
+    if (gpio_get_level(sda)) {
+        return; /* not stuck - nothing to recover */
+    }
+
+    ESP_LOGW(TAG, "I2C bus stuck (SDA held low) - attempting recovery");
+    for (int i = 0; i < 9 && !gpio_get_level(sda); i++) {
+        gpio_set_level(scl, 0);
+        esp_rom_delay_us(5);
+        gpio_set_level(scl, 1);
+        esp_rom_delay_us(5);
+    }
+
+    /* Manual STOP condition: SDA low-to-high while SCL is high. */
+    gpio_set_level(sda, 0);
+    esp_rom_delay_us(5);
+    gpio_set_level(scl, 1);
+    esp_rom_delay_us(5);
+    gpio_set_level(sda, 1);
+    esp_rom_delay_us(5);
+
+    ESP_LOGW(TAG, "I2C bus recovery %s", gpio_get_level(sda) ? "succeeded" : "failed - SDA still held low");
+}
 
 esp_err_t i2c_bus_init(void)
 {
@@ -41,7 +94,10 @@ esp_err_t i2c_bus_init(void)
             return pwr_err;
         }
         gpio_set_level(BOARD_PIN_I2C_BUS_POWER, 1); /* power external I2C sensors on; TODO verify active level */
+        vTaskDelay(pdMS_TO_TICKS(10)); /* let downstream sensors actually power up before touching the bus */
     }
+
+    recover_stuck_bus(BOARD_PIN_I2C_SDA, BOARD_PIN_I2C_SCL);
 
     i2c_master_bus_config_t bus_cfg = {
         .i2c_port = BOARD_I2C_PORT,
