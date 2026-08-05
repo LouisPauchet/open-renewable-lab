@@ -385,6 +385,28 @@ static esp_err_t nvs_save_blob(const char *str)
     return err;
 }
 
+esp_err_t config_store_factory_reset(void)
+{
+    /* Scoped to just this namespace, not a full nvs_flash_erase() -
+     * that would also wipe other components' NVS state (e.g. PHY
+     * calibration data) unrelated to this app's own settings, for no
+     * benefit (WiFi STA credentials aren't stored in the WiFi driver's
+     * own NVS blob here - net_manager.c sources them from this same
+     * "cfg" namespace via config_store_get_net_settings() and calls
+     * esp_wifi_set_config() explicitly every boot). */
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_erase_all(h);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
 /* Caller must hold s_mutex. */
 static esp_err_t save_locked(void)
 {

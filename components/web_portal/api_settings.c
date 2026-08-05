@@ -469,6 +469,34 @@ static esp_err_t reboot_handler(httpd_req_t *req)
     return ret;
 }
 
+/* ---- Factory reset ---- */
+
+static esp_err_t factory_reset_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    esp_err_t err = config_store_factory_reset();
+    if (err != ESP_OK) {
+        return wp_send_error(req, "500 Internal Server Error", "failed to erase stored settings");
+    }
+
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddBoolToObject(resp, "ok", true);
+    esp_err_t ret = wp_send_json(req, resp);
+
+    /* config_store_factory_reset() only erases NVS - a reboot is
+     * needed for config_store_init() to actually pick up the cleared
+     * state (same reboot-after-response pattern as reboot_handler()). */
+    const esp_timer_create_args_t targs = { .callback = reboot_timer_cb, .name = "factory_reset" };
+    esp_timer_handle_t t;
+    if (esp_timer_create(&targs, &t) == ESP_OK) {
+        esp_timer_start_once(t, 500000);
+    }
+    return ret;
+}
+
 void api_settings_register_routes(httpd_handle_t server)
 {
     httpd_uri_t u;
@@ -507,5 +535,8 @@ void api_settings_register_routes(httpd_handle_t server)
     httpd_register_uri_handler(server, &u);
 
     u = (httpd_uri_t){ .uri = "/api/system/reboot", .method = HTTP_POST, .handler = reboot_handler };
+    httpd_register_uri_handler(server, &u);
+
+    u = (httpd_uri_t){ .uri = "/api/system/factory_reset", .method = HTTP_POST, .handler = factory_reset_handler };
     httpd_register_uri_handler(server, &u);
 }

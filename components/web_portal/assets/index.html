@@ -102,6 +102,8 @@
 
   <h2>System</h2>
   <button id="reboot-btn">Reboot device</button>
+  <button id="factory-reset-btn">Reset all settings</button>
+  <div class="msg" id="system-msg"></div>
 </main>
 
 <div id="modal-overlay">
@@ -678,6 +680,23 @@ $("#reboot-btn").addEventListener("click", async () => {
   if (!(await uiConfirm("Reboot the device now?"))) return;
   await api("/api/system/reboot", { method: "POST" }).catch(() => {});
   await uiAlert("Rebooting. Reconnect to the portal in a moment.");
+});
+
+/* ---- factory reset ---- */
+$("#factory-reset-btn").addEventListener("click", async () => {
+  const ok = await uiConfirm(
+    "Erase ALL stored settings (variables, network/cellular, MQTT, position, battery, SD logging, portal password) " +
+    "and reboot?\n\nThis cannot be undone - the device will restart with the factory-default configuration and " +
+    "you'll need to set it up again through this portal."
+  );
+  if (!ok) return;
+  try {
+    await api("/api/system/factory_reset", { method: "POST" });
+    await uiAlert("Settings erased. Rebooting - reconnect to the portal in a moment.");
+  } catch (err) {
+    $("#system-msg").textContent = "Factory reset failed: " + err.message;
+    $("#system-msg").className = "msg err";
+  }
 });
 
 async function refreshAll() {

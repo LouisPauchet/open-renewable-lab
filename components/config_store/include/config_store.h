@@ -21,6 +21,14 @@ esp_err_t config_store_init(void);
  * if you construct a device_config_t via config_store_replace_all(). */
 esp_err_t config_store_save(void);
 
+/* Erases all persisted settings (variables, network/cellular/MQTT/
+ * position/battery/SD config, portal password) - the device falls back
+ * to the same safe compiled-in defaults config_store_init() uses when
+ * no config is stored at all. Does NOT touch the in-RAM config or
+ * reboot; the caller must reboot for config_store_init() to actually
+ * pick up the cleared state on the next boot. */
+esp_err_t config_store_factory_reset(void);
+
 /* Bumped on every successful mutation. Other tasks poll this to detect
  * that they need to reload their view of the config. */
 uint32_t config_store_get_generation(void);
