@@ -106,6 +106,51 @@ static void json_get_str(const cJSON *obj, const char *key, char *dst, size_t ds
  * defaults
  * ------------------------------------------------------------------- */
 
+/* Factory-default variables for the three onboard Walter Feels
+ * environmental sensors (HDC1080 temperature/humidity, LPS22HB
+ * pressure), so a station reports basic ambient conditions out of the
+ * box with no portal setup required - students can still edit/disable/
+ * delete these like any other variable. device_type values (2/3/4) are
+ * I2C_DEVICE_TYPE_HDC1080_TEMP/HDC1080_HUMIDITY/LPS22HB_PRESSURE from
+ * i2c_sensors/include/i2c_sensor_registry.h; not #included here to
+ * avoid a circular component dependency (i2c_sensors already REQUIRES
+ * config_store for config_schema.h). I2C addresses per
+ * USER_MANUAL.md §6.5: HDC1080 is fixed at 0x40; LPS22HB is 0x5C or
+ * 0x5D depending on its SA0 strap - 0x5C (SA0 low) is assumed here as
+ * the more common default, re-check with the portal's "Scan I2C bus"
+ * button and edit the address if a station's board doesn't respond. */
+#define DEFAULT_ONBOARD_HDC1080_TEMP_DEVICE_TYPE 2
+#define DEFAULT_ONBOARD_HDC1080_HUMIDITY_DEVICE_TYPE 3
+#define DEFAULT_ONBOARD_LPS22HB_PRESSURE_DEVICE_TYPE 4
+#define DEFAULT_ONBOARD_HDC1080_I2C_ADDR 0x40
+#define DEFAULT_ONBOARD_LPS22HB_I2C_ADDR 0x5C
+
+/* Sample every 1 minute, log the mean of those samples every 10 minutes -
+ * plenty of resolution for slowly-varying ambient conditions while
+ * keeping SD/MQTT traffic low; see the sleep-strategy note in
+ * app_main.c for how this interacts with idle power draw. */
+#define DEFAULT_ONBOARD_ENV_SAMPLE_INTERVAL_MS (60u * 1000u)
+#define DEFAULT_ONBOARD_ENV_LOG_INTERVAL_MS (10u * 60u * 1000u)
+
+static void add_default_onboard_env_variable(device_config_t *c, uint16_t id, const char *name, const char *unit,
+                                              uint8_t i2c_addr, uint8_t device_type)
+{
+    variable_config_t *v = &c->variables[c->variable_count++];
+    memset(v, 0, sizeof(*v));
+    v->id = id;
+    copy_str(v->name, sizeof(v->name), name);
+    v->bus_type = BUS_TYPE_I2C;
+    v->addr.i2c.i2c_addr = i2c_addr;
+    v->addr.i2c.device_type = device_type;
+    copy_str(v->unit, sizeof(v->unit), unit);
+    v->sample_interval_ms = DEFAULT_ONBOARD_ENV_SAMPLE_INTERVAL_MS;
+    v->log_interval_ms = DEFAULT_ONBOARD_ENV_LOG_INTERVAL_MS;
+    v->aggregate_mask = AGG_MEAN;
+    v->calibration_a = 1.0;
+    v->calibration_b = 0.0;
+    v->enabled = true;
+}
+
 static void config_set_defaults(device_config_t *c)
 {
     memset(c, 0, sizeof(*c));
@@ -138,6 +183,12 @@ static void config_set_defaults(device_config_t *c)
     c->sd.log_format = SD_LOG_FORMAT_LONG;
 
     c->variable_count = 0;
+    add_default_onboard_env_variable(c, 1, "Board_Temperature", "degC", DEFAULT_ONBOARD_HDC1080_I2C_ADDR,
+                                      DEFAULT_ONBOARD_HDC1080_TEMP_DEVICE_TYPE);
+    add_default_onboard_env_variable(c, 2, "Board_Humidity", "%RH", DEFAULT_ONBOARD_HDC1080_I2C_ADDR,
+                                      DEFAULT_ONBOARD_HDC1080_HUMIDITY_DEVICE_TYPE);
+    add_default_onboard_env_variable(c, 3, "Board_Pressure", "hPa", DEFAULT_ONBOARD_LPS22HB_I2C_ADDR,
+                                      DEFAULT_ONBOARD_LPS22HB_PRESSURE_DEVICE_TYPE);
     c->generation = 0;
 
     uint8_t salt[8];
