@@ -1,0 +1,61 @@
+site_name: Open Renewable Lab
+site_description: >-
+  Firmware and setup documentation for the UNIS Open Renewable Lab sensor
+  node (Walter ESP32-S3 + Walter Feels carrier board).
+site_url: https://<OWNER>.github.io/<REPO>/
+repo_url: https://github.com/<OWNER>/<REPO>
+repo_name: <OWNER>/<REPO>
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Build a Datalogger: build_datalogger.md
+  - Getting Started (20W PV panel): getting-started.md
+  - Firmware Downloads: firmware-downloads.md
+  - User Manual: USER_MANUAL.md
+  - Hardware: hardware.md
+  - Developer Guide: DEVELOPER_GUIDE.md
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - admonition
+  - pymdownx.details
+  - tables
+  - fenced_code
+  - attr_list
+  - md_in_html
+
+plugins:
+  - search
+  - with-pdf:
+      # Off by default (plain `mkdocs build` for the Pages deploy skips PDF
+      # rendering entirely); the release workflow sets ENABLE_PDF_EXPORT=1.
+      enabled_if_env: ENABLE_PDF_EXPORT
+      author: The University Centre in Svalbard (UNIS)
+      cover_title: Open Renewable Lab
+      cover_subtitle: Firmware & Setup Documentation
+      output_path: pdf/open-renewable-lab-docs.pdf

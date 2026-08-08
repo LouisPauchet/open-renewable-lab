@@ -1,0 +1,6 @@
+# Python deps to build the documentation site (mkdocs.yml). Not related to
+# firmware build - install in a venv/CI job with:
+#   pip install -r requirements-docs.txt
+mkdocs==1.6.1
+mkdocs-material==9.5.49
+mkdocs-with-pdf==0.9.3

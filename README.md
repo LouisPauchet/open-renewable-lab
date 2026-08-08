@@ -1,22 +1,43 @@
-# Walter Sensor Node
+# Walter Sensor Node — Open Renewable Lab (UNIS)
 
 ESP-IDF firmware for a student-configurable environmental datalogger/gateway
 built on the Walter ESP32-S3 module + Walter Feels carrier board: SDI-12 and
-I2C sensors, SD card logging, MQTT (WiFi or cellular transport), GNSS
-position logging (cellular only), scheduled batch MQTT transmission for
-power saving, and a captive-portal web UI for setup - no code changes needed
-per deployment.
+I2C sensors (including a built-in PV voltage/current sensing input), SD card
+logging, MQTT (WiFi or cellular transport), GNSS position logging (cellular
+only), scheduled batch MQTT transmission for power saving, and a
+captive-portal web UI for setup - no code changes needed per deployment.
 
 Every device has a stable ID derived from its factory MAC address, shown in
 the portal's status panel, written into every CSV file's header line, and
 included in every MQTT topic (`<topic_prefix>/<device_id>/<variable name>`)
 so multiple nodes can share one broker/topic_prefix.
 
+📖 **Full documentation site:** https://\<OWNER\>.github.io/\<REPO\>/ — start
+there for a browsable version of everything below, including a
+[step-by-step guide to wiring up a 20 W solar panel and getting data into
+ThingsBoard](docs/getting-started.md).
+
+## Get firmware onto a board — no ESP-IDF required
+
+Every [release](https://github.com/<OWNER>/<REPO>/releases) publishes a
+ready-to-flash binary. Flash it from your browser (Chrome/Edge, no installs)
+or with `esptool` — see **[docs/firmware-downloads.md](docs/firmware-downloads.md)**.
+The steps below (`idf.py build`) are only needed if you're modifying the
+firmware source.
+
 ## Documentation
 
+- **[docs/getting-started.md](docs/getting-started.md)** - wiring up a real
+  20 W RS PRO solar panel (voltage + current sensing) and getting its data
+  into ThingsBoard over MQTT, start to finish.
 - **[docs/USER_MANUAL.md](docs/USER_MANUAL.md)** - deploying and operating a
   device via the web portal. No code or ESP-IDF knowledge needed; start here
   if you're a student setting up a sensor station.
+- **[docs/hardware.md](docs/hardware.md)** - photos of the physical
+  enclosure, what each external connector is for, and links to the
+  KiCad/CAD source.
+- **[docs/firmware-downloads.md](docs/firmware-downloads.md)** - getting
+  pre-built firmware onto a board without installing ESP-IDF.
 - **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)** - firmware
   architecture, component reference, REST API, concurrency model, and how to
   extend the code (e.g. add a new sensor driver). Start here if you're

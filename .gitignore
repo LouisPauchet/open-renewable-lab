@@ -6,6 +6,9 @@ dependencies.lock
 *.pyc
 .DS_Store
 
+# mkdocs build output (mkdocs.yml) - generated, not source.
+site/
+
 # Editor/tooling - machine- and session-specific (idf.portWin has
 # already changed COM port multiple times in one session alone; not
 # something to commit as if it were a fixed project setting).

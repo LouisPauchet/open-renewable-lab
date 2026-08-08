@@ -1,0 +1,16 @@
+{
+  "name": "Open Renewable Lab - Walter Sensor Node",
+  "version": "latest",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "https://github.com/<OWNER>/<REPO>/releases/latest/download/walter_sensor_node.merged.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
