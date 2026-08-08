@@ -140,7 +140,11 @@ esp_err_t i2c_bus_init(void)
         if (pwr_err != ESP_OK) {
             return pwr_err;
         }
-        gpio_set_level(BOARD_PIN_I2C_BUS_POWER, 1); /* power external I2C sensors on; TODO verify active level */
+        /* Powers the whole I2C bus (external connector + onboard HDC1080/
+         * LPS22HB/LTC4015 - see board_pins.h). Active-HIGH confirmed by
+         * real-hardware evidence: a scan with this driven HIGH found all
+         * of those devices responding (see hdc1080.c's header comment). */
+        gpio_set_level(BOARD_PIN_I2C_BUS_POWER, 1);
         vTaskDelay(pdMS_TO_TICKS(10)); /* let downstream sensors actually power up before touching the bus */
     }
 
@@ -234,6 +238,25 @@ esp_err_t i2c_bus_write_read(uint8_t addr7, const uint8_t *wbuf, size_t wlen, ui
     esp_err_t err = get_or_add_device(addr7, &handle);
     if (err == ESP_OK) {
         err = i2c_master_transmit_receive(handle, wbuf, wlen, rbuf, rlen, (int)timeout_ms);
+        if (err == ESP_ERR_TIMEOUT) {
+            reset_bus_locked();
+        }
+    }
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
+esp_err_t i2c_bus_read(uint8_t addr7, uint8_t *rbuf, size_t rlen, uint32_t timeout_ms)
+{
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    i2c_master_dev_handle_t handle;
+    esp_err_t err = get_or_add_device(addr7, &handle);
+    if (err == ESP_OK) {
+        err = i2c_master_receive(handle, rbuf, rlen, (int)timeout_ms);
         if (err == ESP_ERR_TIMEOUT) {
             reset_bus_locked();
         }

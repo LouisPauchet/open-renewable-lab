@@ -22,6 +22,12 @@ esp_err_t i2c_bus_write(uint8_t addr7, const uint8_t *wbuf, size_t wlen, uint32_
 esp_err_t i2c_bus_write_read(uint8_t addr7, const uint8_t *wbuf, size_t wlen, uint8_t *rbuf, size_t rlen,
                               uint32_t timeout_ms);
 
+/* Plain read (no preceding write phase) - needed for HDC1080's
+ * trigger-then-read-later protocol, where the write (pointer only, no
+ * data) and the read happen as two separate I2C transactions with a
+ * conversion delay in between. */
+esp_err_t i2c_bus_read(uint8_t addr7, uint8_t *rbuf, size_t rlen, uint32_t timeout_ms);
+
 /* Probes every 7-bit address in the standard scan range (0x03-0x77)
  * and reports which ones ACK. */
 esp_err_t i2c_bus_scan(uint8_t *found, size_t max_found, size_t *out_count);

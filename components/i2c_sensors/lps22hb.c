@@ -1,7 +1,11 @@
-/* ST LPS22HB I2C barometric pressure + temperature sensor (Walter
- * Feels onboard sensor bus - see BOARD_PIN_ONBOARD_I2C_* in
- * board_pins.h). I2C address 0x5C (SA0 strapped low) or 0x5D (SA0
- * high) - confirm which with a bus scan if these reads fail.
+/* ST LPS22HB I2C barometric pressure + temperature sensor. I2C address
+ * 0x5C (SA0 strapped low) or 0x5D (SA0 high) - confirm which with a
+ * bus scan if these reads fail.
+ *
+ * Lives on the EXTERNAL I2C connector bus (i2c_bus.h, BOARD_PIN_I2C_*
+ * in board_pins.h) - see hdc1080.c's header comment for why this isn't
+ * onboard_i2c_bus despite board_pins.h's BOARD_PIN_ONBOARD_I2C_* naming
+ * suggesting otherwise; same real-hardware scan evidence applies here.
  *
  * Register map (ST's own driver header + community drivers, cross-
  * checked): CTRL_REG2 (0x11) bit0 = ONE_SHOT, triggers a single
@@ -21,7 +25,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "onboard_i2c_bus.h"
+#include "i2c_bus.h"
 
 #define LPS22HB_REG_CTRL_REG2 0x11
 #define LPS22HB_REG_STATUS 0x27
@@ -36,7 +40,7 @@
 static esp_err_t lps22hb_trigger_and_read(uint8_t i2c_addr, int32_t *out_press_raw, int16_t *out_temp_raw)
 {
     uint8_t trigger[2] = { LPS22HB_REG_CTRL_REG2, LPS22HB_ONE_SHOT_BIT };
-    esp_err_t err = onboard_i2c_bus_write(i2c_addr, trigger, sizeof(trigger), 100);
+    esp_err_t err = i2c_bus_write(i2c_addr, trigger, sizeof(trigger), 100);
     if (err != ESP_OK) {
         return err;
     }
@@ -48,7 +52,7 @@ static esp_err_t lps22hb_trigger_and_read(uint8_t i2c_addr, int32_t *out_press_r
         vTaskDelay(pdMS_TO_TICKS(LPS22HB_POLL_INTERVAL_MS));
         waited_ms += LPS22HB_POLL_INTERVAL_MS;
 
-        err = onboard_i2c_bus_write_read(i2c_addr, &status_reg, 1, &status, 1, 100);
+        err = i2c_bus_write_read(i2c_addr, &status_reg, 1, &status, 1, 100);
         if (err != ESP_OK) {
             return err;
         }
@@ -62,7 +66,7 @@ static esp_err_t lps22hb_trigger_and_read(uint8_t i2c_addr, int32_t *out_press_r
 
     uint8_t out_reg = LPS22HB_REG_PRESS_OUT_XL;
     uint8_t buf[5]; /* PRESS_OUT_XL, _L, _H, TEMP_OUT_L, TEMP_OUT_H */
-    err = onboard_i2c_bus_write_read(i2c_addr, &out_reg, 1, buf, sizeof(buf), 100);
+    err = i2c_bus_write_read(i2c_addr, &out_reg, 1, buf, sizeof(buf), 100);
     if (err != ESP_OK) {
         return err;
     }

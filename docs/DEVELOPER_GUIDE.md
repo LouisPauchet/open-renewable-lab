@@ -108,8 +108,9 @@ open_renewable_lab/
     ├── stub_sensor/        # synthetic sensor source for testing w/o hardware
     ├── sdi12_bus/          # bit-banged SDI-12 physical layer + protocol
     ├── i2c_bus/            # driver/i2c_master.h wrapper (external I2C connector)
-    ├── onboard_i2c_bus/    # second, separate driver/i2c_master.h wrapper (Walter Feels'
-    │                       # onboard HDC1080/LPS22HB sensor bus - distinct physical bus/pins)
+    ├── onboard_i2c_bus/    # second, separate driver/i2c_master.h wrapper - reserved for
+    │                       # Walter Feels' optional/unpopulated CO2 (SCD30) + LSM6DSM IMU
+    │                       # header (GPIO12/11); NOT where HDC1080/LPS22HB live (see §9.2)
     ├── i2c_sensors/        # per-device-type driver registry (ADS111x, HDC1080, LPS22HB, LTC4015, ...)
     ├── sd_logger/          # SDMMC mount + CSV writer
     ├── net_manager/        # WiFi AP+STA, always-on-AP policy
@@ -437,6 +438,15 @@ per-address "device" handle before you can transact, `i2c_bus` keeps a
 small cache (`MAX_CACHED_DEVICES = 16`) mapping address → handle,
 created lazily on first use. Same ownership/mutex pattern as `sdi12_bus`.
 
+> **This whole bus needs battery/PV power, not just USB.** Confirmed by
+> the board owner: the bus (and every device on it) is fed from "Feels
+> 5V", a rail derived from the battery/PV input - USB alone can't power
+> it. Bench-testing over USB only, no battery connected, will reliably
+> print `i2c_bus`'s boot-time "I2C bus stuck (SDA held low)" / "recovery
+> failed" warnings - that's expected (the bus is genuinely unpowered,
+> not wedged), not a firmware bug. See `board_pins.h`'s
+> `BOARD_PIN_I2C_BUS_POWER` comment.
+
 ```c
 esp_err_t i2c_bus_init(void);
 esp_err_t i2c_bus_write(uint8_t addr7, const uint8_t *wbuf, size_t wlen, uint32_t timeout_ms);
@@ -452,6 +462,20 @@ dispatching on `variable_config_t.addr.i2c.device_type`:
 |---|---|---|
 | `I2C_DEVICE_TYPE_ADS111X` | 0 | TI ADS1113/1114/1115, 16-bit ADC |
 | `I2C_DEVICE_TYPE_GENERIC_REG16` | 1 | Raw signed 16-bit big-endian register read, no scaling |
+| `I2C_DEVICE_TYPE_HDC1080_TEMP` | 2 | TI HDC1080 temperature, fixed addr 0x40 |
+| `I2C_DEVICE_TYPE_HDC1080_HUMIDITY` | 3 | TI HDC1080 humidity, fixed addr 0x40 |
+| `I2C_DEVICE_TYPE_LPS22HB_PRESSURE` | 4 | ST LPS22HB pressure, addr 0x5C/0x5D |
+| `I2C_DEVICE_TYPE_LPS22HB_TEMP` | 5 | ST LPS22HB temperature, addr 0x5C/0x5D |
+| `I2C_DEVICE_TYPE_LTC4015` | 6 | Battery charger/monitor telemetry, fixed addr 0x68 |
+
+**All of the above go through `i2c_bus` (the external connector bus)**,
+including HDC1080/LPS22HB despite `board_pins.h` having a separate
+`onboard_i2c_bus`/`BOARD_PIN_ONBOARD_I2C_*` bus that their naming might
+suggest. That separate bus (GPIO12/11, schematic-labeled `CO2_SDA`/
+`CO2_SCL`) is reserved for the optional, currently-unpopulated CO2
+(SCD30) + LSM6DSM IMU header - real-hardware I2C scan evidence (see
+`board_pins.h`'s comment on `BOARD_PIN_ONBOARD_I2C_SDA`) corrected an
+earlier assumption that HDC1080/LPS22HB lived there instead.
 
 `ads111x_read_channel()` uses a fixed configuration — PGA ±4.096V
 full-scale, single-shot mode, 128SPS (`ADS111X_CONVERSION_DELAY_MS = 10`
@@ -928,8 +952,16 @@ them in a real deployment:
 5. **`board_pins.h`**: SD card-detect, status LED, and force-AP-button
    pins are still unset placeholders (nothing on the available schematic
    pages showed them).
-6. **No OTA** — reflashing requires physical USB access.
-7. **MQTT batch buffer** (`MAX_BATCH_ITEMS = 256`) can overflow (drops
+6. ~~HDC1080/LPS22HB bus location~~ — **resolved**, no longer a limitation.
+   Corrected from an earlier wrong assumption (they were originally wired
+   through `onboard_i2c_bus`, not `i2c_bus`): real-hardware I2C scan
+   evidence found their addresses (plus LTC4015 and an LSM6DSM IMU) all on
+   the external bus, and the board owner confirmed directly that every I2C
+   device on this board (GPIO42/2/1) shares one bus - `onboard_i2c_bus`
+   (GPIO12/11/13) only reaches a real but currently-unpopulated CO2 sensor
+   header. See [section 9.2](#92-i2c-i2c_bus--i2c_sensors).
+7. **No OTA** — reflashing requires physical USB access.
+8. **MQTT batch buffer** (`MAX_BATCH_ITEMS = 256`) can overflow (drops
    silently, logged) if you combine many variables, short log intervals,
    and a long batch interval — see the sizing note in
    [USER_MANUAL.md §7.4](USER_MANUAL.md#74-batch-transmission-saving-power).

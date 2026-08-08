@@ -140,6 +140,11 @@ laptops).
 The first thing you see after logging in is the **Status** panel, which
 refreshes automatically every 5 seconds. Here's what each field means:
 
+<figure markdown>
+![Portal Status panel](pictures/Portal_Infos.png)
+<figcaption>The Status panel, right after login.</figcaption>
+</figure>
+
 | Field | Meaning |
 |---|---|
 | Device ID | A unique, permanent 12-character ID for this specific device (derived from its hardware address). Used to tell devices apart in shared MQTT topics and to identify CSV files. |
@@ -237,11 +242,11 @@ sensible values before you leave it to log unattended.
 
 ### 6.5 Onboard Walter Feels sensors (battery, temperature, humidity, pressure)
 
-The Walter Feels carrier board itself has built-in sensors, wired to a
-separate internal I2C bus (not the external I2C connector, and not
-affected by the "Scan I2C bus" button, since their addresses are
-already known). To use one, add a variable with bus type `I2C` and pick
-one of these device types:
+The Walter Feels carrier board itself has built-in sensors, wired to the
+same I2C bus as the external connector (so they *do* show up if you use
+the "Scan I2C bus" button — you don't need it for these, since their
+addresses are already known and listed below). To use one, add a
+variable with bus type `I2C` and pick one of these device types:
 
 | Device type | Reads | Typical I2C address |
 |---|---|---|
@@ -257,6 +262,11 @@ of the settings page — this isn't a fixed board setting, since different
 stations may use different batteries (Li-Ion, LiFePO4, or lead-acid).
 Getting this wrong won't damage anything, but will scale the reported
 voltage incorrectly.
+
+<figure markdown>
+![Portal Battery monitor settings](pictures/Portal_Battery.png)
+<figcaption>The Battery monitor settings section.</figcaption>
+</figure>
 
 ### 6.6 Calibrating a variable (a·x + b)
 
@@ -422,6 +432,11 @@ under 256.
 Under **Network**, choose how the device gets online for MQTT/position
 reporting (this is separate from the always-available setup hotspot):
 
+<figure markdown>
+![Portal Network settings](pictures/Portal_Network.png)
+<figcaption>The Network settings section, transport set to Unconfigured.</figcaption>
+</figure>
+
 | Transport | When to use it |
 |---|---|
 | Unconfigured (default) | No data connection — the device still samples and logs to SD, just doesn't publish anywhere. |
@@ -452,6 +467,14 @@ position — useful for tracking a mobile deployment or confirming a fixed
 station's install location. This is not available over WiFi, since the GPS
 receiver is built into the same chip as the cellular modem.
 
+<figure markdown>
+![Portal Position reporting settings](pictures/Portal_Position.png)
+<figcaption>
+The Position reporting section (grayed out here since transport isn't set
+to Cellular).
+</figcaption>
+</figure>
+
 Under **Position reporting**:
 
 - **Enabled** — turn position reporting on/off.
@@ -472,6 +495,11 @@ following the same batching behavior as your sensor data.
 The **SD logging** settings section lets you choose between three CSV
 layouts. Changing this only affects newly-created files — it doesn't
 rewrite anything already logged.
+
+<figure markdown>
+![Portal SD card logging settings](pictures/Portal_SDCard.png)
+<figcaption>The SD card logging settings section.</figcaption>
+</figure>
 
 **Long (default)** — one row per variable per aggregate event, all
 variables and days interleaved into `sensors_YYYYMMDD.csv` (UTC date),
@@ -545,6 +573,15 @@ See [section 7.3](#73-understanding-topics-and-payloads).
 ---
 
 ## 11. Account and security
+
+<figure markdown>
+![Portal password, Backup, and System sections](pictures/Portal_Critical.png)
+<figcaption>
+The bottom of the settings page: Portal password (this section), Backup
+([section 12](#12-backup-and-restore)), and System
+([section 13](#13-rebooting)) all together.
+</figcaption>
+</figure>
 
 ### 11.1 Changing the password
 

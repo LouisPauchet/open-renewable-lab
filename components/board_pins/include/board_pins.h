@@ -130,11 +130,31 @@
 #define BOARD_PIN_RS232_TX_EN GPIO_NUM_17
 #define BOARD_PIN_RS232_RX_EN GPIO_NUM_16
 
-/* ---- I2C connector (external sensors, e.g. ADC boards) ---- */
+/* ---- I2C bus (GPIO42/2/1) ----
+ * The single, shared I2C bus for this board - confirmed directly
+ * against the Walter Feels schematic: every I2C device (the external
+ * connector's ADC boards, and the onboard HDC1080/LPS22HB/LTC4015) is
+ * wired to SDA=42/SCL=2, powered from the one switched rail on GPIO1.
+ * Matches the real-hardware scan evidence in i2c_sensors/hdc1080.c's
+ * header comment - GPIO1 driven HIGH (its assumed active level, see
+ * i2c_bus.c) successfully powered HDC1080/LPS22HB/LTC4015/an LSM6DSM
+ * IMU for that scan, which also resolves the polarity as correct rather
+ * than merely assumed.
+ *
+ * CONFIRMED BY THE BOARD OWNER: this whole bus (and its devices'
+ * supply) is fed from "Feels 5V", a rail derived from the board's
+ * battery/PV input - USB alone cannot power it. Bench-testing over USB
+ * only, with no battery connected, is therefore *expected* to show
+ * i2c_bus's boot-time "I2C bus stuck (SDA held low) - attempting
+ * recovery" / "recovery failed" warnings (nothing is actually wedged;
+ * the bus and every device on it are simply unpowered) - this isn't a
+ * firmware bug and no amount of bus-recovery logic will fix it. Connect
+ * a battery (or otherwise supply Feels 5V) before trusting an I2C
+ * failure on this bus as a real fault. */
 #define BOARD_I2C_PORT          (-1) /* -1 = let the I2C driver auto-assign a free port */
 #define BOARD_PIN_I2C_SDA       GPIO_NUM_42
 #define BOARD_PIN_I2C_SCL       GPIO_NUM_2
-#define BOARD_PIN_I2C_BUS_POWER GPIO_NUM_1 /* I2C_BUSPOW - switched rail for external I2C sensors */
+#define BOARD_PIN_I2C_BUS_POWER GPIO_NUM_1 /* I2C_BUSPOW - shared switched rail for the whole I2C bus above, not just external-connector devices */
 #define BOARD_I2C_CLOCK_HZ      100000
 
 /* ---- microSD slot ----
@@ -165,20 +185,24 @@
 #define BOARD_PIN_3V3_SW_EN GPIO_NUM_0
 
 /* ---- Onboard peripherals ----
- * LTC4015 battery charger/monitor lives on BOARD_I2C_PORT above (the
- * same external-connector bus), fixed I2C addr 0x68 - no dedicated
- * GPIOs needed, see i2c_sensors/ltc4015.c.
+ * LTC4015 battery charger/monitor, HDC1080 (temp/humidity, fixed addr
+ * 0x40), and LPS22HB (pressure/temp, addr 0x5C or 0x5D depending on
+ * SA0 strapping) all live on BOARD_I2C_PORT above (the external-
+ * connector bus), fixed I2C addrs - no dedicated GPIOs needed, see
+ * i2c_sensors/ltc4015.c, hdc1080.c, lps22hb.c.
  *
- * The onboard HDC1080 (temp/humidity, fixed addr 0x40) and LPS22HB
- * (pressure/temp, addr 0x5C or 0x5D depending on SA0 strapping) sit on
- * a second, electrically separate I2C bus with its own dedicated GPIOs
- * - not the external connector. CO2_EN gates power to this bus
- * segment (also used by the optional SCD30 CO2 sensor and the
- * LSM6DSM IMU, neither wired into firmware - out of scope for v1). */
+ * CORRECTED from an earlier assumption that HDC1080/LPS22HB sat on
+ * this separate onboard bus instead: real-hardware I2C scan evidence
+ * (a factory-fresh board, nothing plugged into the external connector)
+ * found 0x40/0x5C/0x68/0x6A all by scanning the EXTERNAL bus, while
+ * this bus's own devices cleanly NACKed every read (not timed out).
+ * Confirmed directly by the board owner: this pin pair only reaches a
+ * real, unpopulated CO2 sensor header on the PCB (pads present, no
+ * chip soldered) - not a second bus for the fixed sensors. */
 #define BOARD_ONBOARD_I2C_PORT      (-1) /* -1 = let the I2C driver auto-assign a free port */
-#define BOARD_PIN_ONBOARD_I2C_SDA   GPIO_NUM_12 /* CO2_SDA */
+#define BOARD_PIN_ONBOARD_I2C_SDA   GPIO_NUM_12 /* CO2_SDA - unpopulated CO2 (SCD30) sensor header (also documented to carry an LSM6DSM IMU); neither wired into firmware, out of scope for v1 */
 #define BOARD_PIN_ONBOARD_I2C_SCL   GPIO_NUM_11 /* CO2_SCL */
-#define BOARD_PIN_ONBOARD_I2C_EN    GPIO_NUM_13 /* CO2_EN - active level not confirmed from the schematic; onboard_i2c_bus_init() drives it HIGH, verify with a meter if these sensors don't respond */
+#define BOARD_PIN_ONBOARD_I2C_EN    GPIO_NUM_13 /* CO2_EN - active level not confirmed from the schematic; onboard_i2c_bus_init() drives it HIGH, verify with a meter once a CO2/IMU chip is actually populated and a driver is added */
 #define BOARD_ONBOARD_I2C_CLOCK_HZ  100000
 
 #endif /* BOARD_VARIANT */

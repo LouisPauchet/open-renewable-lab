@@ -13,9 +13,11 @@ extern "C" {
 #define I2C_DEVICE_TYPE_ADS111X 0     /* TI ADS1113/1114/1115 16-bit ADC; channel_index 0-7 = the chip's raw MUX select (0-3 differential pairs, 4-7 single-ended) - see ads111x.c */
 #define I2C_DEVICE_TYPE_GENERIC_REG16 1 /* fallback: raw signed 16-bit big-endian register read, no scaling */
 
-/* Walter Feels onboard sensors (separate onboard I2C bus except LTC4015
- * - see board_pins.h's BOARD_PIN_ONBOARD_I2C_* comment). channel_index
- * is unused (0) for the fixed single-purpose device types below. */
+/* Walter Feels onboard sensors - all on the EXTERNAL I2C connector bus
+ * (i2c_bus.h), same as LTC4015; see hdc1080.c's header comment for why
+ * this isn't the separate BOARD_PIN_ONBOARD_I2C_* bus despite the
+ * naming. channel_index is unused (0) for the fixed single-purpose
+ * device types below. */
 #define I2C_DEVICE_TYPE_HDC1080_TEMP 2     /* TI HDC1080 temperature - see hdc1080.c */
 #define I2C_DEVICE_TYPE_HDC1080_HUMIDITY 3 /* TI HDC1080 humidity - see hdc1080.c */
 #define I2C_DEVICE_TYPE_LPS22HB_PRESSURE 4 /* ST LPS22HB pressure - see lps22hb.c */
