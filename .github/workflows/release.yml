@@ -1,0 +1,124 @@
+name: Release firmware + docs
+
+# Runs when a maintainer publishes a GitHub Release. Builds the firmware,
+# produces a single flashable merged binary (see docs/firmware-downloads.md
+# for how students use it), and attaches everything - plus a combined PDF
+# of the documentation site - to that same release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same build as firmware-ci.yml - see that workflow for notes on the
+      # esp_idf_version pin and the Docker-tag fallback if v6.0.2 isn't
+      # published yet.
+      - name: Build (esp32s3)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.2
+          target: esp32s3
+          command: idf.py build
+
+      - name: Assemble release binaries
+        run: |
+          mkdir -p out
+          cp build/bootloader/bootloader.bin out/bootloader.bin
+          cp build/partition_table/partition-table.bin out/partition-table.bin
+          cp build/walter_sensor_node.bin out/walter_sensor_node.bin
+
+      - name: Install esptool
+        run: pip install esptool
+
+      # Offsets/flags taken verbatim from this project's own
+      # build/flasher_args.json (dio/80m/16MB, 0x0/0x8000/0x10000) - not
+      # guessed. Produces one binary a student can write to offset 0x0 in
+      # a single command (see docs/firmware-downloads.md Option 2), and
+      # what the browser-based flasher in Option 1 uses under the hood.
+      - name: Merge into a single flashable binary
+        run: |
+          esptool.py --chip esp32s3 merge_bin \
+            -o out/walter_sensor_node.merged.bin \
+            --flash_mode dio --flash_freq 80m --flash_size 16MB \
+            0x0 out/bootloader.bin \
+            0x8000 out/partition-table.bin \
+            0x10000 out/walter_sensor_node.bin
+
+      - name: Checksums
+        working-directory: out
+        run: sha256sum *.bin > SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-bins
+          path: out/
+          retention-days: 7
+
+  docs-pdf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # System libraries mkdocs-with-pdf's WeasyPrint backend needs to
+      # render the PDF (not required for the plain HTML build in docs.yml).
+      - name: Install WeasyPrint system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 \
+            libcairo2 libffi-dev shared-mime-info
+
+      - name: Install docs dependencies
+        run: pip install -r requirements-docs.txt
+
+      - name: Build documentation PDF
+        env:
+          ENABLE_PDF_EXPORT: "1"
+        run: mkdocs build --strict
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docs-pdf
+          path: site/pdf/open-renewable-lab-docs.pdf
+          retention-days: 7
+
+  publish:
+    needs: [firmware, docs-pdf]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-bins
+          path: out
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: docs-pdf
+          path: out
+
+      - name: Attach assets to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            out/bootloader.bin
+            out/partition-table.bin
+            out/walter_sensor_node.bin
+            out/walter_sensor_node.merged.bin
+            out/SHA256SUMS
+            out/open-renewable-lab-docs.pdf
+            docs/manifest.json

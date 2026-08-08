@@ -1,0 +1,44 @@
+name: Firmware CI
+
+# Build validation only - no artifacts published. See release.yml for the
+# workflow that publishes downloadable binaries on a GitHub Release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "components/**"
+      - "main/**"
+      - "managed_components/**"
+      - "CMakeLists.txt"
+      - "partitions.csv"
+      - "sdkconfig.defaults*"
+      - ".github/workflows/firmware-ci.yml"
+  pull_request:
+    paths:
+      - "components/**"
+      - "main/**"
+      - "managed_components/**"
+      - "CMakeLists.txt"
+      - "partitions.csv"
+      - "sdkconfig.defaults*"
+      - ".github/workflows/firmware-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # espressif/esp-idf-ci-action runs idf.py inside the official
+      # espressif/idf Docker image for the pinned version, so this job
+      # needs no local toolchain install. If the "v6.0.2" image tag isn't
+      # published yet, fall back to the floating "release-v6.0" tag, or
+      # to a manual `./install.sh esp32s3 && . ./export.sh && idf.py build`
+      # against a checkout of the esp-idf v6.0.2 git tag.
+      - name: Build (esp32s3)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.2
+          target: esp32s3
+          command: idf.py build
