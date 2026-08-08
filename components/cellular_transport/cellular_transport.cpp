@@ -49,6 +49,7 @@ WalterModem &cellular_transport_get_modem()
  * is built on top of it rather than being a direct SDK call. */
 static SemaphoreHandle_t s_gnss_fix_ready;
 static WMGNSSFixEvent s_pending_walter_fix;
+static volatile bool s_gnss_busy; /* see cellular_transport_gnss_busy()'s header comment */
 
 static void gnss_event_handler(WMGNSSEventType type, const WMGNSSEventData *data, void *args)
 {
@@ -118,6 +119,28 @@ esp_err_t cellular_transport_init(void)
     if (!modem.begin(UART_NUM_1)) {
         ESP_LOGE(TAG, "modem.begin() failed");
         return ESP_FAIL;
+    }
+
+    /* 3GPP Power Saving Mode: lets the modem drop into its own deep
+     * sleep between transmissions instead of always listening on the
+     * radio, while staying registered on the network - the cellular
+     * equivalent of WIFI_PS_MIN_MODEM in net_manager.c. Requested here
+     * (while still in the default MINIMUM opstate, before NO_RF/FULL
+     * below) rather than computed via durationToTAU()/durationToActiveTime()
+     * because configPSM() takes the already wire-encoded 8-bit binary
+     * strings directly (AT+CPSMS's own format) - these two values are
+     * copied verbatim from the SDK's own examples/bluecherry/main/bluecherry.cpp
+     * reference (the only place this encoding is demonstrated end to
+     * end): TAU "00000110" = 6 x 10min = 1 hour (periodic full
+     * reconnect if otherwise idle), Active Time "00000001" = 1 x 2s =
+     * 2 seconds (how long the modem stays reachable after activity
+     * before dropping back to sleep). Best-effort/non-fatal like
+     * unlockSIM() below - not every network/SIM honors PSM, and that
+     * shouldn't block the device from connecting normally. eDRX
+     * (configEDRX()) is a complementary, shallower power-saving mode
+     * not enabled here to keep this change scoped to PSM. */
+    if (!modem.configPSM(WALTER_MODEM_PSM_ENABLE, "00000110", "00000001")) {
+        ESP_LOGW(TAG, "configPSM failed (network/SIM may not support PSM) - continuing without it");
     }
 
     /* PDP context/SIM PIN must be set up before the modem goes FULL -
@@ -199,7 +222,11 @@ esp_err_t cellular_transport_acquire_gnss_fix(gnss_fix_t *out_fix, uint32_t time
      * fix attempt ("Required for GNSS") and reconnects afterward.
      * Best-effort: a slow/failed disconnect or reconnect doesn't abort
      * the fix attempt itself, since cellular_task() will keep retrying
-     * registration regardless. */
+     * registration regardless. Flagged busy for the whole window (see
+     * cellular_transport_gnss_busy()) so other modem users - notably
+     * mqtt_client_bridge - can skip a doomed attempt instead of queuing
+     * behind (or racing) this up-to-60s sequence. */
+    s_gnss_busy = true;
     bool was_registered = s_registered;
     if (was_registered) {
         modem.setOpState(WALTER_MODEM_OPSTATE_NO_RF);
@@ -242,7 +269,13 @@ esp_err_t cellular_transport_acquire_gnss_fix(gnss_fix_t *out_fix, uint32_t time
         start_lte_connect(modem);
     }
 
+    s_gnss_busy = false;
     return result;
+}
+
+bool cellular_transport_gnss_busy(void)
+{
+    return s_gnss_busy;
 }
 
 #else /* !CONFIG_IDF_TARGET_ESP32S3 */
@@ -259,6 +292,11 @@ esp_err_t cellular_transport_acquire_gnss_fix(gnss_fix_t *out_fix, uint32_t time
     (void)out_fix;
     (void)timeout_ms;
     return ESP_ERR_NOT_SUPPORTED;
+}
+
+bool cellular_transport_gnss_busy(void)
+{
+    return false;
 }
 
 #endif /* CONFIG_IDF_TARGET_ESP32S3 */

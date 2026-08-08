@@ -383,7 +383,8 @@ static void mqtt_publish_task(void *pvParams)
         if (!s_current_settings.batch_enabled) {
             int64_t now_us = esp_timer_get_time();
             if (s_backend && s_current_settings.enabled && !s_backend_connected &&
-                strlen(s_current_settings.host) > 0 && now_us >= s_next_reconnect_attempt_us) {
+                strlen(s_current_settings.host) > 0 && now_us >= s_next_reconnect_attempt_us &&
+                !cellular_transport_gnss_busy()) {
                 ESP_LOGI(TAG, "connecting to %s:%u (tls=%d, cellular registered=%d pdp_active=%d)",
                          s_current_settings.host, s_current_settings.port, (int)s_current_settings.use_tls,
                          (int)cellular_transport_is_registered(), (int)cellular_transport_is_pdp_active());
@@ -414,7 +415,8 @@ static void mqtt_publish_task(void *pvParams)
         }
 
         int64_t now_us = esp_timer_get_time();
-        if (s_backend && s_current_settings.enabled && now_us >= s_next_batch_transmit_us) {
+        if (s_backend && s_current_settings.enabled && now_us >= s_next_batch_transmit_us &&
+            !cellular_transport_gnss_busy()) {
             if (!s_backend_connected) {
                 if (s_backend->init(&s_current_settings) == ESP_OK && s_backend->connect() == ESP_OK) {
                     s_backend_connected = s_backend->is_connected();
