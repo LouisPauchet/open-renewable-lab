@@ -72,35 +72,59 @@ static esp_err_t ltc4015_write_reg16(uint8_t i2c_addr, uint8_t reg, uint16_t val
  * time, confirmed against the datasheet (4015fb, CONFIG_BITS
  * sub-address 0x14) and matching a real "battery voltage always reads
  * 0 V" report on real hardware with a genuine battery connected but no
- * active charging input. force_meas_sys_on (bit 4) makes the ADC run
- * continuously regardless of input power - the right tradeoff for a
- * monitoring application (a small increase in the LTC4015's own
- * battery-only quiescent draw, not the sensor node's overall power
- * budget). Read-modify-write so as not to disturb other CONFIG_BITS
- * (e.g. suspend_charger, mppt_en_i2c) this driver never otherwise
- * touches. Checked once per boot, not on every read - if the LTC4015
- * itself loses and regains power independently of the ESP32 (VIN and
- * battery both briefly absent), this bit would reset and telemetry
- * would go back to reading 0 until the next reboot; a full LTC4015
- * power-cycle while the ESP32 stays up is enough of an edge case that
- * re-checking on every single read isn't worth doubling I2C traffic
- * for. */
+ * active charging input. force_meas_sys_on (bit 4) forces the ADC to
+ * run regardless of input power.
+ *
+ * REVERTED from an on-demand enable-before/disable-after-every-read
+ * version: that saved a small amount of quiescent draw on the LTC4015
+ * itself, but real-hardware testing showed the board's serial link
+ * (both monitor and flashing) reliably breaking shortly after boot once
+ * that version started running - right around when battery_monitor_task
+ * (the first thing to touch this register) starts. Strongly suspected
+ * cause: this board's known USB+battery power-arbitration issue (see
+ * cellular_transport/USB-serial notes elsewhere in the docs - LTC4015
+ * is buck-only, can't step USB's 5V up to charge a 12V battery, so USB
+ * and battery are independently-arbitrated sources on the shared logic
+ * rail) being tipped over by the extra current the ADC draws right as
+ * it's switched on. Toggling this bit on every read (every ~5s-ish)
+ * repeated that risk continuously; enabling once and leaving it on
+ * only risks it once. Until that power issue is root-caused, "once" is
+ * the safer choice even though it costs a bit more idle current on the
+ * charger IC - a working board beats a marginally lower quiescent draw.
+ *
+ * Checked once per boot (once *confirmed*, not once *attempted* - see
+ * below), not on every read - if the LTC4015 itself loses and regains
+ * power independently of the ESP32 (VIN and battery both briefly
+ * absent), this bit would reset and telemetry would go back to reading
+ * 0 until the next reboot; a full LTC4015 power-cycle while the ESP32
+ * stays up is enough of an edge case that re-checking on every single
+ * read isn't worth doubling I2C traffic for. Read-modify-write so as
+ * not to disturb other CONFIG_BITS (e.g. suspend_charger, mppt_en_i2c)
+ * this driver never otherwise touches. The flag is only set once the
+ * bit is actually confirmed on, so a failed attempt (e.g. landing
+ * before the chip/bus has settled right after boot) simply retries on
+ * the next poll instead of failing shut for the rest of the session -
+ * an earlier version of this fix latched the flag unconditionally
+ * before even attempting the read and left VBAT reading a silent,
+ * permanent 0.000 V for exactly that reason. */
 static bool s_meas_sys_checked;
 static void ensure_measurement_system_enabled(uint8_t i2c_addr)
 {
     if (s_meas_sys_checked) {
         return;
     }
-    s_meas_sys_checked = true;
 
     uint16_t config;
     if (ltc4015_read_reg16(i2c_addr, LTC4015_REG_CONFIG_BITS, &config) != ESP_OK) {
-        return; /* LTC4015 not present/reachable - nothing to fix, the actual telemetry read below will fail too */
+        return; /* not present/reachable yet - retry next call rather than latching this off permanently */
     }
     if (config & LTC4015_CONFIG_FORCE_MEAS_SYS_ON) {
-        return; /* already set */
+        s_meas_sys_checked = true; /* already set */
+        return;
     }
-    ltc4015_write_reg16(i2c_addr, LTC4015_REG_CONFIG_BITS, config | LTC4015_CONFIG_FORCE_MEAS_SYS_ON);
+    if (ltc4015_write_reg16(i2c_addr, LTC4015_REG_CONFIG_BITS, config | LTC4015_CONFIG_FORCE_MEAS_SYS_ON) == ESP_OK) {
+        s_meas_sys_checked = true; /* confirmed set - safe to stop rechecking */
+    }
 }
 
 esp_err_t ltc4015_read_channel(uint8_t i2c_addr, uint8_t channel, double *out_value)
@@ -108,51 +132,49 @@ esp_err_t ltc4015_read_channel(uint8_t i2c_addr, uint8_t channel, double *out_va
     if (!out_value) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (channel > 3) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
     ensure_measurement_system_enabled(i2c_addr);
 
     uint16_t raw;
-    esp_err_t err;
+    esp_err_t result;
 
     switch (channel) {
-        case 0: { /* VBAT - battery voltage */
-            err = ltc4015_read_reg16(i2c_addr, LTC4015_REG_VBAT, &raw);
-            if (err != ESP_OK) {
-                return err;
+        case 0: /* VBAT - battery voltage */
+            result = ltc4015_read_reg16(i2c_addr, LTC4015_REG_VBAT, &raw);
+            if (result == ESP_OK) {
+                battery_settings_t bs;
+                config_store_get_battery_settings(&bs);
+                double lsb = (bs.chemistry == BATTERY_CHEM_LEAD_ACID) ? (LTC4015_ADC_BASE_LSB_V * 7.0 / 3.0)
+                                                                        : (LTC4015_ADC_BASE_LSB_V * 7.0 / 2.0);
+                uint8_t cells = bs.cell_count > 0 ? bs.cell_count : 1;
+                *out_value = (double)raw * lsb * cells;
             }
-            battery_settings_t bs;
-            config_store_get_battery_settings(&bs);
-            double lsb = (bs.chemistry == BATTERY_CHEM_LEAD_ACID) ? (LTC4015_ADC_BASE_LSB_V * 7.0 / 3.0)
-                                                                    : (LTC4015_ADC_BASE_LSB_V * 7.0 / 2.0);
-            uint8_t cells = bs.cell_count > 0 ? bs.cell_count : 1;
-            *out_value = (double)raw * lsb * cells;
-            return ESP_OK;
-        }
-        case 1: { /* VIN - input voltage */
-            err = ltc4015_read_reg16(i2c_addr, LTC4015_REG_VIN, &raw);
-            if (err != ESP_OK) {
-                return err;
+            break;
+        case 1: /* VIN - input voltage */
+            result = ltc4015_read_reg16(i2c_addr, LTC4015_REG_VIN, &raw);
+            if (result == ESP_OK) {
+                *out_value = (double)raw * LTC4015_VIN_LSB_V;
             }
-            *out_value = (double)raw * LTC4015_VIN_LSB_V;
-            return ESP_OK;
-        }
-        case 2: { /* IBAT - battery current, signed (+ = charging, - = discharging) */
-            err = ltc4015_read_reg16(i2c_addr, LTC4015_REG_IBAT, &raw);
-            if (err != ESP_OK) {
-                return err;
+            break;
+        case 2: /* IBAT - battery current, signed (+ = charging, - = discharging) */
+            result = ltc4015_read_reg16(i2c_addr, LTC4015_REG_IBAT, &raw);
+            if (result == ESP_OK) {
+                *out_value = (double)(int16_t)raw * LTC4015_IBAT_LSB_V / LTC4015_RSNSB_OHMS;
             }
-            *out_value = (double)(int16_t)raw * LTC4015_IBAT_LSB_V / LTC4015_RSNSB_OHMS;
-            return ESP_OK;
-        }
-        case 3: { /* DIE_TEMP - charger die temperature */
-            err = ltc4015_read_reg16(i2c_addr, LTC4015_REG_DIE_TEMP, &raw);
-            if (err != ESP_OK) {
-                return err;
+            break;
+        case 3: /* DIE_TEMP - charger die temperature */
+            result = ltc4015_read_reg16(i2c_addr, LTC4015_REG_DIE_TEMP, &raw);
+            if (result == ESP_OK) {
+                *out_value = ((double)raw - 12010.0) / 45.6;
             }
-            *out_value = ((double)raw - 12010.0) / 45.6;
-            return ESP_OK;
-        }
+            break;
         default:
-            return ESP_ERR_INVALID_ARG;
+            result = ESP_ERR_INVALID_ARG; /* unreachable - guarded above */
+            break;
     }
+
+    return result;
 }
