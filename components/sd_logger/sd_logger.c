@@ -566,6 +566,22 @@ esp_err_t sd_logger_init(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    /* The SD slot is fed from the same switched 3V3_SW rail as the
+     * external I2C connector (see board_pins.h's BOARD_PIN_3V3_SW_EN
+     * comment - real hardware testing found both failed without it).
+     * i2c_bus_init() already needed a 10ms settle delay after enabling
+     * its own switched rail before the bus would respond; sd_logger_init()
+     * runs even earlier in app_main()'s boot sequence (right after the
+     * bus inits, only tens of ms after board_pins_enable_3v3_sw()) with
+     * no settle delay of its own, and real hardware reproduced exactly
+     * the failure this rail-timing pattern predicts:
+     * `sdmmc_init_ocr: send_op_cond (1) returned 0x107` (ESP_ERR_TIMEOUT -
+     * the card never responds) on a boot where the card is physically
+     * fine. A short wait here costs nothing at boot; if this doesn't
+     * fully fix it, the card/slot/wiring itself needs checking next
+     * rather than the timing. */
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
 
     sdmmc_slot_config_t slot_cfg = SDMMC_SLOT_CONFIG_DEFAULT();
