@@ -18,6 +18,13 @@ static const char *TAG = "net_manager";
 static bool s_sta_connected;
 static esp_timer_handle_t s_sta_reconnect_timer;
 
+/* Tracks whether esp_wifi_start() is currently in effect, independent of
+ * esp_wifi_get_mode()'s own return (that reflects the last configured
+ * mode even while stopped, which isn't what apply_wifi_mode() below
+ * needs to know). Set true once at the end of net_manager_init(); see
+ * apply_wifi_mode()'s WIFI_MODE_NULL branch for how it goes false. */
+static bool s_wifi_started;
+
 static wifi_mode_t compute_desired_mode(void)
 {
     net_settings_t net;
@@ -42,15 +49,49 @@ static void apply_wifi_mode(void)
 {
     wifi_mode_t desired = compute_desired_mode();
 
-    wifi_mode_t current;
-    if (esp_wifi_get_mode(&current) == ESP_OK && current == desired) {
+    if (desired == WIFI_MODE_NULL) {
+        /* Nothing needs AP or STA right now (past the boot-grace window,
+         * no portal client connected, and no WiFi station transport
+         * configured) - fully stop the WiFi driver rather than just
+         * clearing its mode, so the radio (RF/PHY) actually powers down
+         * instead of staying initialized-but-idle. Restarted on demand
+         * below the moment AP or STA is needed again (a client shows up
+         * during a forced-on grace window, etc). */
+        if (s_wifi_started) {
+            esp_err_t err = esp_wifi_stop();
+            if (err == ESP_OK) {
+                s_wifi_started = false;
+                ESP_LOGI(TAG, "wifi stopped - nothing needs AP or STA right now");
+            } else {
+                ESP_LOGE(TAG, "esp_wifi_stop failed: %s", esp_err_to_name(err));
+            }
+        }
         return;
+    }
+
+    if (s_wifi_started) {
+        wifi_mode_t current;
+        if (esp_wifi_get_mode(&current) == ESP_OK && current == desired) {
+            return;
+        }
     }
 
     esp_err_t err = esp_wifi_set_mode(desired);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_set_mode(%d) failed: %s", (int)desired, esp_err_to_name(err));
         return;
+    }
+
+    if (!s_wifi_started) {
+        err = esp_wifi_start();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_wifi_start failed: %s", esp_err_to_name(err));
+            return;
+        }
+        s_wifi_started = true;
+        /* Modem power-save isn't persisted across stop/start - see the
+         * matching call (and its own comment) in net_manager_init(). */
+        esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
     }
     ESP_LOGI(TAG, "wifi mode -> %d", (int)desired);
 }
@@ -134,6 +175,18 @@ esp_err_t net_manager_init(void)
     }
 
     ESP_ERROR_CHECK(esp_wifi_start());
+    s_wifi_started = true;
+
+    /* Modem power-save: let the radio doze between beacon/DTIM
+     * intervals instead of staying fully powered all the time -
+     * cooperates with the system-wide automatic light sleep enabled in
+     * app_main.c. Mainly benefits STA mode (idle time between the
+     * broker/AP's beacons); the SoftAP side still has to keep beaconing
+     * on schedule regardless; harmless to set unconditionally.
+     * WIFI_PS_MIN_MODEM is also ESP-IDF's own default for STA, set
+     * explicitly here so the intent isn't silently dependent on that
+     * default staying unchanged. */
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
 
     ap_policy_set_callback(apply_wifi_mode_for_ap_state);
     ESP_ERROR_CHECK(ap_policy_init());

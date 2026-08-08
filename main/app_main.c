@@ -8,6 +8,7 @@
 #include "esp_chip_info.h"
 #include "esp_flash.h"
 #include "esp_log.h"
+#include "esp_pm.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -46,6 +47,32 @@ static void debug_result_sink_task(void *pvParams)
 
 void app_main(void)
 {
+    /* Power management: allow the CPU to clock down to XTAL frequency
+     * (40MHz) and the idle task to drop into automatic light sleep
+     * whenever nothing has work to do, rather than always running at
+     * the configured max (160MHz, CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ) -
+     * this station is meant to run on battery/solar, and every
+     * subsystem here is already event/timer-driven (sampling_engine's
+     * per-variable schedules, sd_logger's queue, mqtt_client_bridge,
+     * etc.), so none of them need to be rewritten for this to help:
+     * the idle task just stops spinning between their wakeups. Requires
+     * CONFIG_PM_ENABLE + CONFIG_FREERTOS_USE_TICKLESS_IDLE (see
+     * sdkconfig.defaults); guarded here so this still builds (as a
+     * no-op) if those are ever turned off via menuconfig. Note this can
+     * make the USB-Serial-JTAG console feel less responsive right after
+     * an idle period (the link itself can briefly sleep too) - a
+     * cosmetic monitor-only side effect, not a functional one. */
+#if CONFIG_PM_ENABLE
+    esp_pm_config_t pm_config = {
+        .max_freq_mhz = 160,
+        .min_freq_mhz = 40,
+#if CONFIG_FREERTOS_USE_TICKLESS_IDLE
+        .light_sleep_enable = true,
+#endif
+    };
+    ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
+#endif
+
     /* Must happen before any peripheral bus init below - the external
      * I2C connector, onboard I2C sensor bus, and SD card are all fed
      * from this switched rail on Walter Feels (see board_pins.h). */

@@ -29,6 +29,34 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_LWIP_SNTP_MAX_SERVERS=1
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 
+# Power management: DISABLED again, pending investigation.
+#
+# CONFIG_PM_ENABLE + CONFIG_FREERTOS_USE_TICKLESS_IDLE (automatic light
+# sleep) were enabled earlier this session for battery/solar power
+# saving, with esp_pm_configure() in app_main.c doing the actual
+# min/max-frequency + light-sleep setup. Real hardware then reproduced a
+# permanent hang right after "sampling engine started" - reliably, with
+# every other variable ruled out (reverted every other change made this
+# session, erased NVS config back to factory defaults, removed the SD
+# card, tested on a bare Walter module and on a full Walter Feels
+# assembly, with and without a battery) - pointing at sd_logger_init()
+# (the next synchronous call in app_main() after that log line, and the
+# first one doing real timing-sensitive hardware waiting: an SDMMC
+# command/response cycle, even on a mount attempt that's about to fail
+# because no card is present). Leading theory, NOT YET CONFIRMED: the
+# SDMMC driver doesn't hold a PM lock across that wait, so automatic
+# light sleep can trigger mid-transaction, the clocks the peripheral's
+# state machine depends on shift under it, and a normally-bounded
+# timeout never completes. Disabled here to test that theory - if a
+# build with this off boots cleanly again, that confirms it, and a
+# follow-up should either scope light sleep more narrowly (e.g. only
+# after sd_logger_init() has completed) or find the right PM lock to
+# hold around SDMMC access, rather than leaving power saving off for
+# good. CONFIG_PM_ENABLE=y / CONFIG_FREERTOS_USE_TICKLESS_IDLE=y is what
+# to restore once that's sorted out.
+# CONFIG_PM_ENABLE is not set
+# CONFIG_FREERTOS_USE_TICKLESS_IDLE is not set
+
 # cJSON (via the espressif/cjson managed component - no longer bundled
 # in-tree as a "json" component in this ESP-IDF version) is used by
 # config_store for the NVS-backed config blob, and throughout the REST
