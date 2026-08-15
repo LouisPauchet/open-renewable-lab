@@ -29,7 +29,7 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_LWIP_SNTP_MAX_SERVERS=1
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 
-# Power management: DISABLED again, pending investigation.
+# Power management: DISABLED, CONFIRMED necessary.
 #
 # CONFIG_PM_ENABLE + CONFIG_FREERTOS_USE_TICKLESS_IDLE (automatic light
 # sleep) were enabled earlier this session for battery/solar power
@@ -43,17 +43,22 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 # (the next synchronous call in app_main() after that log line, and the
 # first one doing real timing-sensitive hardware waiting: an SDMMC
 # command/response cycle, even on a mount attempt that's about to fail
-# because no card is present). Leading theory, NOT YET CONFIRMED: the
-# SDMMC driver doesn't hold a PM lock across that wait, so automatic
-# light sleep can trigger mid-transaction, the clocks the peripheral's
-# state machine depends on shift under it, and a normally-bounded
-# timeout never completes. Disabled here to test that theory - if a
-# build with this off boots cleanly again, that confirms it, and a
-# follow-up should either scope light sleep more narrowly (e.g. only
-# after sd_logger_init() has completed) or find the right PM lock to
-# hold around SDMMC access, rather than leaving power saving off for
-# good. CONFIG_PM_ENABLE=y / CONFIG_FREERTOS_USE_TICKLESS_IDLE=y is what
-# to restore once that's sorted out.
+# because no card is present).
+#
+# CONFIRMED on real hardware: a build with these two options off (this
+# one) boots cleanly past that point every time. The exact mechanism
+# (most likely the SDMMC driver not holding a PM lock across that wait,
+# so automatic light sleep triggers mid-transaction and a normally-
+# bounded timeout never completes) is still an inference, not something
+# independently verified against the driver source - what's confirmed
+# is the correlation, not the internal cause. A real fix (scoping light
+# sleep to start only after sd_logger_init() completes, or finding the
+# right PM lock to hold around SDMMC access) is a reasonable follow-up,
+# but shouldn't be attempted without hardware in hand to verify it
+# against - re-enabling this blind risks reproducing a hang that took a
+# long, methodical bisection to pin down once already. CONFIG_PM_ENABLE=y
+# / CONFIG_FREERTOS_USE_TICKLESS_IDLE=y is what to restore once a fix is
+# actually tested.
 # CONFIG_PM_ENABLE is not set
 # CONFIG_FREERTOS_USE_TICKLESS_IDLE is not set
 
