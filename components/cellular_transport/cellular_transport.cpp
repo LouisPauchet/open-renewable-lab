@@ -254,6 +254,7 @@ esp_err_t cellular_transport_acquire_gnss_fix(gnss_fix_t *out_fix, uint32_t time
         fix.latitude = s_pending_walter_fix.latitude;
         fix.longitude = s_pending_walter_fix.longitude;
         fix.altitude_m = (float)s_pending_walter_fix.height;
+        fix.horizontal_accuracy_m = (float)s_pending_walter_fix.estimatedConfidence;
         fix.timestamp_unix = s_pending_walter_fix.timestamp;
         fix.valid = true;
 

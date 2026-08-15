@@ -6,6 +6,7 @@
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "sampling_engine.h" /* field_aggregate_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,11 +28,16 @@ bool sd_logger_is_ready(void);
  * the SD card isn't mounted. */
 QueueHandle_t sd_logger_get_sink_queue(void);
 
-/* Logs a GNSS fix to a separate position_YYYYMMDD.csv (day-bucketed,
- * same convention as sensor data). Non-blocking; drops (counted in
+/* Logs one aggregated GNSS position record (latitude/longitude/
+ * elevation/horizontal-precision, each already reduced to
+ * raw/mean/min/max/stddev over the log interval - see gnss_position.c)
+ * to a separate position_YYYYMMDD.csv (day-bucketed, same convention as
+ * sensor data). Non-blocking; drops (counted in
  * sd_logger_get_drop_count()) rather than ever blocking the caller. */
-esp_err_t sd_logger_log_position(int64_t timestamp_unix, bool time_is_synced, double latitude, double longitude,
-                                  float altitude_m);
+esp_err_t sd_logger_log_position(int64_t timestamp_unix, bool time_is_synced, uint32_t sample_count,
+                                  uint8_t aggregate_mask, const field_aggregate_t *latitude,
+                                  const field_aggregate_t *longitude, const field_aggregate_t *elevation_m,
+                                  const field_aggregate_t *h_precision_m);
 
 /* For the web portal's /api/status. Returns ESP_ERR_INVALID_STATE if
  * not mounted. */

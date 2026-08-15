@@ -172,7 +172,14 @@ static void config_set_defaults(device_config_t *c)
     c->mqtt.batch_interval_ms = 30 * 60 * 1000; /* 30 min */
 
     c->position.enabled = false;
-    c->position.interval_ms = 10 * 60 * 1000; /* 10 min */
+    /* Equal by default (10 min) - a single fix attempted and immediately
+     * logged, matching this project's previous single-interval
+     * behavior exactly. Set sample_interval_ms lower than
+     * log_interval_ms to trade modem/battery cost for fresher/averaged
+     * fixes at each log tick - see position_settings_t's own comment. */
+    c->position.sample_interval_ms = 10 * 60 * 1000; /* 10 min */
+    c->position.log_interval_ms = 10 * 60 * 1000;    /* 10 min */
+    c->position.aggregate_mask = AGG_RAW;
 
     c->battery.chemistry = BATTERY_CHEM_LI_ION;
     c->battery.cell_count = 1;
@@ -296,7 +303,9 @@ cJSON *config_store_to_json(const device_config_t *c)
 
     cJSON *position = cJSON_AddObjectToObject(root, "position");
     cJSON_AddBoolToObject(position, "enabled", c->position.enabled);
-    cJSON_AddNumberToObject(position, "interval_ms", c->position.interval_ms);
+    cJSON_AddNumberToObject(position, "sample_interval_ms", c->position.sample_interval_ms);
+    cJSON_AddNumberToObject(position, "log_interval_ms", c->position.log_interval_ms);
+    cJSON_AddNumberToObject(position, "aggregate_mask", c->position.aggregate_mask);
 
     cJSON *battery = cJSON_AddObjectToObject(root, "battery");
     cJSON_AddNumberToObject(battery, "chemistry", c->battery.chemistry);
@@ -354,7 +363,12 @@ bool config_store_from_json(const cJSON *root, device_config_t *c)
     const cJSON *position = cJSON_GetObjectItemCaseSensitive(root, "position");
     if (position) {
         c->position.enabled = json_get_bool(position, "enabled", false);
-        c->position.interval_ms = (uint32_t)json_get_int(position, "interval_ms", (int)c->position.interval_ms);
+        c->position.sample_interval_ms =
+            (uint32_t)json_get_int(position, "sample_interval_ms", (int)c->position.sample_interval_ms);
+        c->position.log_interval_ms =
+            (uint32_t)json_get_int(position, "log_interval_ms", (int)c->position.log_interval_ms);
+        c->position.aggregate_mask =
+            (uint8_t)json_get_int(position, "aggregate_mask", c->position.aggregate_mask) & AGG_ALL_VALID_BITS;
     }
 
     const cJSON *battery = cJSON_GetObjectItemCaseSensitive(root, "battery");

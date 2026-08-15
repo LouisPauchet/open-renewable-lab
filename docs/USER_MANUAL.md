@@ -363,14 +363,24 @@ with "mean" and "max" enabled might publish:
   `stddev` — only the ones you checked appear).
 
 If you've enabled position reporting (cellular only — see
-[section 9](#9-position-reporting)), GPS fixes are published separately to:
+[section 9](#9-position-reporting)), position is published separately to:
 
 ```
 <topic_prefix>/<device_id>/position
 ```
+
+Position works exactly like a variable with four fields (latitude,
+longitude, elevation, horizontal precision) instead of one — each fix is
+folded into the same kind of running aggregate, and only the aggregates
+you've checked appear, one key per `<field>_<aggregate>`:
+
 ```json
-{"ts": 1752345600, "time_synced": true, "lat": 78.9231, "lon": 11.9349, "alt": 12.0}
+{"ts": 1752345600, "time_synced": true, "n": 8, "lat_mean": 78.9231, "lat_stddev": 0.00004, "lon_mean": 11.9349, "lon_stddev": 0.00006, "elevation_m_mean": 12.4, "elevation_m_stddev": 1.1, "h_precision_m_mean": 6.2, "h_precision_m_stddev": 0.8}
 ```
+
+`h_precision_m` is the GNSS fix's own estimated horizontal confidence in
+meters (smaller = more confident) — useful for spotting a poor-quality
+fix rather than trusting every reported position equally.
 
 #### Flat telemetry topic (ThingsBoard, AWS IoT, etc.)
 
@@ -467,6 +477,11 @@ position — useful for tracking a mobile deployment or confirming a fixed
 station's install location. This is not available over WiFi, since the GPS
 receiver is built into the same chip as the cellular modem.
 
+> ⚠ **Requires a physical GNSS/GPS antenna connected to the modem.**
+> Without one, the device will keep trying and failing to get a fix
+> (harmless, just logged) but will never actually report a position — the
+> portal warns about this directly above the Position reporting settings.
+
 <figure markdown>
 ![Portal Position reporting settings](pictures/Portal_Position.png)
 <figcaption>
@@ -475,14 +490,29 @@ to Cellular).
 </figcaption>
 </figure>
 
-Under **Position reporting**:
+Position works the same way as a sensor variable — latitude, longitude,
+elevation, and horizontal precision are each treated as their own field,
+sampled and aggregated on the same schedule — just kept as its own section
+rather than one more entry in the Variables list, since it's device-wide
+rather than per-sensor. Under **Position reporting**:
 
 - **Enabled** — turn position reporting on/off.
-- **Report interval (ms)** — how often to attempt a GPS fix and log/publish
-  it. Default: `600000` (every 10 minutes). A cold GPS fix can take up to
-  about a minute, so avoid setting this extremely short.
+- **Sample interval (ms)** — how often to attempt a GPS fix. A cold fix can
+  take up to about a minute and briefly interrupts the cellular connection
+  (GPS and LTE share the modem's one antenna), so keep this reasonably
+  long — the default is `600000` (10 minutes).
+- **Log/aggregate interval (ms)** — how often the fixes collected since the
+  last log are aggregated into one record and logged/published. Must be
+  `>=` the sample interval. Default: `600000` (10 minutes, same as sample
+  interval — one fix in, one record out, by default).
+- **Aggregates** — same `raw`/`mean`/`min`/`max`/`stddev` choices as a
+  variable (see [section 6.3](#63-understanding-sampling-vs-logging-vs-aggregation)),
+  applied independently to latitude, longitude, elevation, and horizontal
+  precision. If you set the sample interval shorter than the log interval,
+  `mean` gives you a position averaged over several fixes — steadier, but
+  only meaningful for a station that isn't moving between fixes.
 
-Position fixes are logged to a separate CSV file on the SD card (see
+Position records are logged to a separate CSV file on the SD card (see
 [section 10](#10-where-your-data-goes)) and published over MQTT if enabled,
 following the same batching behavior as your sensor data.
 
@@ -553,11 +583,12 @@ that data lands in a `..._19700101.csv` file instead — a clearly-labeled
 "unsynced" bucket rather than a wrong date (applies to all three formats).
 
 Position fixes (cellular only, if enabled) always go to a separate file
-regardless of the SD logging format setting, `position_YYYYMMDD.csv`,
-with columns:
+regardless of the SD logging format setting, `position_YYYYMMDD.csv`. Like
+the Long sensor format, every raw/mean/min/max/stddev column is always
+present — `aggregate_mask` tells you which ones you actually asked for:
 
 ```
-timestamp_unix,time_synced,latitude,longitude,altitude_m
+timestamp_unix,time_synced,sample_count,aggregate_mask,lat_raw,lat_mean,lat_min,lat_max,lat_stddev,lon_raw,lon_mean,lon_min,lon_max,lon_stddev,elevation_m_raw,elevation_m_mean,elevation_m_min,elevation_m_max,elevation_m_stddev,h_precision_m_raw,h_precision_m_mean,h_precision_m_min,h_precision_m_max,h_precision_m_stddev
 ```
 
 All of these can be opened directly in Excel, Google Sheets, or loaded
@@ -700,6 +731,10 @@ recording your new one somewhere safe, matters.
   yet.
 
 **Position reporting shows no fix.**
+- Confirm a **GNSS/GPS antenna is physically connected** to the modem —
+  by far the most common cause. Without one, the device just keeps
+  retrying silently forever; nothing in the portal can detect a missing
+  antenna for you.
 - Confirm transport is set to **Cellular** (position isn't available over
   WiFi) and **Position enabled** is checked.
 - A GPS fix needs a clear view of the sky and can take up to about a
@@ -751,7 +786,7 @@ recording your new one somewhere safe, matters.
 
 **Default MQTT batch interval**: 1,800,000 ms (30 minutes)
 
-**Default position report interval**: 600,000 ms (10 minutes)
+**Default position sample/log interval**: 600,000 ms (10 minutes) each
 
 **Max variables per device**: 32
 

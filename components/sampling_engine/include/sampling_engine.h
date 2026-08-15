@@ -26,6 +26,23 @@ typedef struct {
     bool time_is_synced;
 } aggregate_result_t;
 
+/* Same raw/mean/min/max/stddev shape as aggregate_result_t above, as a
+ * reusable sub-struct rather than a full result in its own right -
+ * gnss_position.c bundles four of these (latitude, longitude,
+ * elevation, horizontal precision) into one position record instead of
+ * four separate variable-shaped results, since GPS position keeps its
+ * own dedicated CSV file / MQTT payload shape rather than becoming
+ * generic variables. Populated the same way (an aggregator_t per
+ * field, see aggregator.h), just outside sampling_engine's own
+ * per-variable scheduling. */
+typedef struct {
+    double raw;
+    double mean;
+    double min;
+    double max;
+    double stddev;
+} field_aggregate_t;
+
 /* Bus drivers are how sampling_engine stays hardware-agnostic: each bus
  * type (SDI-12, I2C) registers a synchronous read function. Real drivers
  * (sdi12_bus, i2c_bus) and the stub_sensor test driver all implement

@@ -793,16 +793,47 @@ tested code.
 
 A single task, spawned only when `net_settings.transport ==
 TRANSPORT_CELLULAR` (`gnss_position_init()` is a no-op otherwise — no task
-spawned at all). Each cycle:
+spawned at all).
+
+`position_settings_t` deliberately mirrors `variable_config_t`'s
+sample/log-interval + `aggregate_mask` shape (`config_schema.h`) — GPS
+position is conceptually a variable with four fields (latitude, longitude,
+elevation, horizontal precision) rather than one, kept as its own
+config/UI section instead of joining the generic `variables[]` array since
+it's device-wide, not per-sensor, and keeps its own dedicated CSV file /
+MQTT payload shape rather than becoming four generic variables. Each
+field gets its own `aggregator_t` (`sampling_engine`'s `aggregator.h` -
+the exact same Welford accumulator `sampling_engine.c` itself uses, just
+driven locally here rather than through the generic bus-driver path).
+Each cycle:
 
 1. Read `position_settings_t` from `config_store` (checked fresh every
-   cycle, so toggling it on/off or changing the interval doesn't need a
-   reboot, unlike `transport` itself).
-2. If disabled, sleep `IDLE_CHECK_MS = 5000` and recheck.
+   cycle, so toggling it on/off or changing the intervals/aggregates
+   doesn't need a reboot, unlike `transport` itself).
+2. If disabled (or either interval is 0), reset all four accumulators and
+   sleep `IDLE_CHECK_MS = 5000` before rechecking.
 3. If enabled, call `cellular_transport_acquire_gnss_fix()` (up to
-   `GNSS_FIX_TIMEOUT_MS = 60000`), then on success call
-   `sd_logger_log_position()` and `mqttc_publish_position()`, then sleep
-   `position.interval_ms` before the next cycle.
+   `GNSS_FIX_TIMEOUT_MS = 60000`); on success, feed
+   latitude/longitude/altitude/`horizontal_accuracy_m` into their
+   accumulators (starting a new log window's deadline on the first
+   sample, not on a fixed clock schedule) and set the modem-derived
+   timestamp as this window's own. Once `log_interval_ms` has elapsed
+   since the window opened, finalize all four accumulators into
+   `field_aggregate_t`s, call `sd_logger_log_position()` and
+   `mqttc_publish_position()` with the bundle, then reset. Either way,
+   sleep `sample_interval_ms` before the next fix attempt.
+
+`gnss_fix_t.horizontal_accuracy_m` (`cellular_transport.h`) is
+WalterModem's own `estimatedConfidence` - "the estimated horizontal
+confidence of the fix in meters" per its header comment; not independently
+verified beyond that, same confidence caveat as the rest of this
+component (see [section 18](#18-known-limitations-and-low-confidence-areas)).
+
+Requires a physical GNSS antenna connected to the modem - without one,
+`gnssPerformAction()` just fails/times out repeatedly rather than ever
+producing a fix. Firmware has no way to detect antenna presence itself;
+the portal surfaces this as a plain warning instead (`index.html`'s
+`positionFormFields()`).
 
 Not registered with the task watchdog — see
 [6.3](#63-task-watchdog-registration).
@@ -965,6 +996,16 @@ them in a real deployment:
    silently, logged) if you combine many variables, short log intervals,
    and a long batch interval — see the sizing note in
    [USER_MANUAL.md §7.4](USER_MANUAL.md#74-batch-transmission-saving-power).
+9. **Automatic light sleep (`CONFIG_PM_ENABLE`) is off, deliberately.**
+   Confirmed on real hardware to cause a permanent boot hang right after
+   "sampling engine started" — reproduced with every other variable ruled
+   out (see `sdkconfig.defaults`'s own comment on these two options for
+   the full bisection). Leading suspect is `sd_logger_init()`'s SDMMC
+   mount attempt (the first real timing-sensitive hardware wait after
+   that log line) not being light-sleep-safe, but the exact internal
+   mechanism isn't independently verified, only the correlation. Don't
+   re-enable `CONFIG_PM_ENABLE`/`CONFIG_FREERTOS_USE_TICKLESS_IDLE`
+   without hardware in hand to test against.
 
 ---
 

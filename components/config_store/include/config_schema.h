@@ -113,9 +113,19 @@ typedef struct {
     /* GNSS position reporting - only meaningful (and only ever
      * attempted) when net.transport == TRANSPORT_CELLULAR, since
      * Walter's GNSS is provided by the cellular modem chip itself.
-     * Dynamically toggleable without a reboot, unlike transport. */
+     * Dynamically toggleable without a reboot, unlike transport.
+     *
+     * Same sample/log-interval + aggregate-mask model as a regular
+     * variable_config_t below: latitude, longitude, elevation, and
+     * horizontal precision are each a "variable" of their own, fed by
+     * one fix per sample_interval_ms into a Welford accumulator
+     * (aggregator_t, see aggregator.h), finalized into
+     * raw/mean/min/max/stddev (per aggregate_mask) and logged/published
+     * every log_interval_ms - see gnss_position.c. */
     bool enabled;
-    uint32_t interval_ms; /* how often to acquire + log/publish a fix */
+    uint32_t sample_interval_ms; /* how often to attempt a GPS fix */
+    uint32_t log_interval_ms;    /* how often the fixes since the last log are aggregated and logged/published; must be >= sample_interval_ms */
+    uint8_t aggregate_mask;      /* bitwise OR of aggregate_mask_t, applied independently to each of the four fields above */
 } position_settings_t;
 
 typedef enum {

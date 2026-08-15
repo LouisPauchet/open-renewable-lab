@@ -26,9 +26,12 @@ static const char *TAG = "sd_logger";
 typedef struct {
     int64_t timestamp_unix;
     bool time_is_synced;
-    double latitude;
-    double longitude;
-    float altitude_m;
+    uint32_t sample_count;
+    uint8_t aggregate_mask;
+    field_aggregate_t latitude;
+    field_aggregate_t longitude;
+    field_aggregate_t elevation_m;
+    field_aggregate_t h_precision_m;
 } position_row_t;
 
 /* ---------------------------------------------------------------------
@@ -495,6 +498,10 @@ static void check_group_timeouts(void)
  * single fixed-schema record type, not per-variable/aggregate data).
  * ------------------------------------------------------------------- */
 
+/* Every raw/mean/min/max/stddev column is always written regardless of
+ * aggregate_mask, same convention as write_result_row()'s LONG format
+ * for regular variables - aggregate_mask tells you which ones were
+ * actually requested, the rest can be ignored. */
 static void write_position_row(const position_row_t *p)
 {
     char path[80];
@@ -512,11 +519,24 @@ static void write_position_row(const position_row_t *p)
 
     if (is_new_file) {
         fprintf(f, "# device_id=%s\n", device_id_get());
-        fprintf(f, "timestamp_unix,time_synced,latitude,longitude,altitude_m\n");
+        fprintf(f,
+                "timestamp_unix,time_synced,sample_count,aggregate_mask,"
+                "lat_raw,lat_mean,lat_min,lat_max,lat_stddev,"
+                "lon_raw,lon_mean,lon_min,lon_max,lon_stddev,"
+                "elevation_m_raw,elevation_m_mean,elevation_m_min,elevation_m_max,elevation_m_stddev,"
+                "h_precision_m_raw,h_precision_m_mean,h_precision_m_min,h_precision_m_max,h_precision_m_stddev\n");
     }
 
-    fprintf(f, "%lld,%d,%.6f,%.6f,%.2f\n", (long long)p->timestamp_unix, (int)p->time_is_synced, p->latitude,
-            p->longitude, p->altitude_m);
+    fprintf(f, "%lld,%d,%" PRIu32 ",%u,", (long long)p->timestamp_unix, (int)p->time_is_synced, p->sample_count,
+            (unsigned)p->aggregate_mask);
+    fprintf(f, "%.6f,%.6f,%.6f,%.6f,%.6f,", p->latitude.raw, p->latitude.mean, p->latitude.min, p->latitude.max,
+            p->latitude.stddev);
+    fprintf(f, "%.6f,%.6f,%.6f,%.6f,%.6f,", p->longitude.raw, p->longitude.mean, p->longitude.min, p->longitude.max,
+            p->longitude.stddev);
+    fprintf(f, "%.2f,%.2f,%.2f,%.2f,%.2f,", p->elevation_m.raw, p->elevation_m.mean, p->elevation_m.min,
+            p->elevation_m.max, p->elevation_m.stddev);
+    fprintf(f, "%.2f,%.2f,%.2f,%.2f,%.2f\n", p->h_precision_m.raw, p->h_precision_m.mean, p->h_precision_m.min,
+            p->h_precision_m.max, p->h_precision_m.stddev);
 
     fclose(f);
 }
@@ -647,8 +667,10 @@ QueueHandle_t sd_logger_get_sink_queue(void)
     return s_ready ? s_queue : NULL;
 }
 
-esp_err_t sd_logger_log_position(int64_t timestamp_unix, bool time_is_synced, double latitude, double longitude,
-                                  float altitude_m)
+esp_err_t sd_logger_log_position(int64_t timestamp_unix, bool time_is_synced, uint32_t sample_count,
+                                  uint8_t aggregate_mask, const field_aggregate_t *latitude,
+                                  const field_aggregate_t *longitude, const field_aggregate_t *elevation_m,
+                                  const field_aggregate_t *h_precision_m)
 {
     if (!s_ready) {
         return ESP_ERR_INVALID_STATE;
@@ -656,9 +678,12 @@ esp_err_t sd_logger_log_position(int64_t timestamp_unix, bool time_is_synced, do
     position_row_t row = {
         .timestamp_unix = timestamp_unix,
         .time_is_synced = time_is_synced,
-        .latitude = latitude,
-        .longitude = longitude,
-        .altitude_m = altitude_m,
+        .sample_count = sample_count,
+        .aggregate_mask = aggregate_mask,
+        .latitude = *latitude,
+        .longitude = *longitude,
+        .elevation_m = *elevation_m,
+        .h_precision_m = *h_precision_m,
     };
     if (xQueueSend(s_position_queue, &row, 0) != pdTRUE) {
         s_drop_count++;

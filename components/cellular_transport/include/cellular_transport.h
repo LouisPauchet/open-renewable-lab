@@ -33,6 +33,7 @@ typedef struct {
     double latitude;
     double longitude;
     float altitude_m;
+    float horizontal_accuracy_m; /* WalterModem's estimatedConfidence - estimated horizontal confidence of the fix, in meters */
     int64_t timestamp_unix;
     bool valid;
 } gnss_fix_t;

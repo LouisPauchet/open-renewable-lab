@@ -39,7 +39,18 @@ static size_t s_batch_count;
 static int64_t s_next_batch_transmit_us;
 
 static SemaphoreHandle_t s_position_mutex;
-static gnss_fix_t s_pending_position;
+typedef struct {
+    int64_t timestamp_unix;
+    bool time_is_synced;
+    uint32_t sample_count;
+    uint8_t aggregate_mask;
+    field_aggregate_t latitude;
+    field_aggregate_t longitude;
+    field_aggregate_t elevation_m;
+    field_aggregate_t h_precision_m;
+} position_report_t;
+
+static position_report_t s_pending_position;
 static bool s_pending_position_valid;
 
 static SemaphoreHandle_t s_battery_mutex;
@@ -233,14 +244,46 @@ static void publish_result(const aggregate_result_t *r)
     }
 }
 
-static void build_position_json_payload(const gnss_fix_t *fix, char *out, size_t out_size)
+/* Same "only the aggregates actually selected appear" convention as
+ * add_flat_keys() above, just keyed by a fixed field prefix
+ * (lat/lon/elevation_m/h_precision_m) instead of a variable name, since
+ * one position payload always bundles all four fields together. */
+static void add_position_field_keys(cJSON *target, const char *prefix, uint8_t aggregate_mask,
+                                     const field_aggregate_t *f)
+{
+    char key[40];
+    if (aggregate_mask & AGG_RAW) {
+        snprintf(key, sizeof(key), "%s_raw", prefix);
+        cJSON_AddNumberToObject(target, key, f->raw);
+    }
+    if (aggregate_mask & AGG_MEAN) {
+        snprintf(key, sizeof(key), "%s_mean", prefix);
+        cJSON_AddNumberToObject(target, key, f->mean);
+    }
+    if (aggregate_mask & AGG_MIN) {
+        snprintf(key, sizeof(key), "%s_min", prefix);
+        cJSON_AddNumberToObject(target, key, f->min);
+    }
+    if (aggregate_mask & AGG_MAX) {
+        snprintf(key, sizeof(key), "%s_max", prefix);
+        cJSON_AddNumberToObject(target, key, f->max);
+    }
+    if (aggregate_mask & AGG_STDDEV) {
+        snprintf(key, sizeof(key), "%s_stddev", prefix);
+        cJSON_AddNumberToObject(target, key, f->stddev);
+    }
+}
+
+static void build_position_json_payload(const position_report_t *p, char *out, size_t out_size)
 {
     cJSON *o = cJSON_CreateObject();
-    cJSON_AddNumberToObject(o, "ts", (double)fix->timestamp_unix);
-    cJSON_AddBoolToObject(o, "time_synced", fix->timestamp_unix > 0);
-    cJSON_AddNumberToObject(o, "lat", fix->latitude);
-    cJSON_AddNumberToObject(o, "lon", fix->longitude);
-    cJSON_AddNumberToObject(o, "alt", fix->altitude_m);
+    cJSON_AddNumberToObject(o, "ts", (double)p->timestamp_unix);
+    cJSON_AddBoolToObject(o, "time_synced", p->time_is_synced);
+    cJSON_AddNumberToObject(o, "n", p->sample_count);
+    add_position_field_keys(o, "lat", p->aggregate_mask, &p->latitude);
+    add_position_field_keys(o, "lon", p->aggregate_mask, &p->longitude);
+    add_position_field_keys(o, "elevation_m", p->aggregate_mask, &p->elevation_m);
+    add_position_field_keys(o, "h_precision_m", p->aggregate_mask, &p->h_precision_m);
 
     char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
@@ -252,7 +295,7 @@ static void build_position_json_payload(const gnss_fix_t *fix, char *out, size_t
     }
 }
 
-static void publish_position_now(const gnss_fix_t *fix)
+static void publish_position_now(const position_report_t *p)
 {
     char topic[96];
     if (s_current_settings.flat_telemetry) {
@@ -261,8 +304,9 @@ static void publish_position_now(const gnss_fix_t *fix)
         snprintf(topic, sizeof(topic), "%s/%s/position", s_current_settings.topic_prefix, device_id_get());
     }
 
-    char payload[192];
-    build_position_json_payload(fix, payload, sizeof(payload));
+    /* Up to 4 fields x 5 aggregates worth of keys, generously padded. */
+    char payload[768];
+    build_position_json_payload(p, payload, sizeof(payload));
 
     esp_err_t err = s_backend->publish(topic, payload, 1, false);
     if (err != ESP_OK) {
@@ -280,12 +324,12 @@ static void maybe_publish_pending_position(void)
 
     xSemaphoreTake(s_position_mutex, portMAX_DELAY);
     bool have = s_pending_position_valid;
-    gnss_fix_t fix = s_pending_position;
+    position_report_t p = s_pending_position;
     s_pending_position_valid = false;
     xSemaphoreGive(s_position_mutex);
 
     if (have) {
-        publish_position_now(&fix);
+        publish_position_now(&p);
     }
 }
 
@@ -515,9 +559,12 @@ bool mqttc_is_ready(void)
     return s_backend != NULL && s_backend_connected;
 }
 
-esp_err_t mqttc_publish_position(const gnss_fix_t *fix)
+esp_err_t mqttc_publish_position(int64_t timestamp_unix, bool time_is_synced, uint32_t sample_count,
+                                  uint8_t aggregate_mask, const field_aggregate_t *latitude,
+                                  const field_aggregate_t *longitude, const field_aggregate_t *elevation_m,
+                                  const field_aggregate_t *h_precision_m)
 {
-    if (!fix) {
+    if (!latitude || !longitude || !elevation_m || !h_precision_m) {
         return ESP_ERR_INVALID_ARG;
     }
     if (!s_position_mutex) {
@@ -525,7 +572,14 @@ esp_err_t mqttc_publish_position(const gnss_fix_t *fix)
     }
 
     xSemaphoreTake(s_position_mutex, portMAX_DELAY);
-    s_pending_position = *fix;
+    s_pending_position.timestamp_unix = timestamp_unix;
+    s_pending_position.time_is_synced = time_is_synced;
+    s_pending_position.sample_count = sample_count;
+    s_pending_position.aggregate_mask = aggregate_mask;
+    s_pending_position.latitude = *latitude;
+    s_pending_position.longitude = *longitude;
+    s_pending_position.elevation_m = *elevation_m;
+    s_pending_position.h_precision_m = *h_precision_m;
     s_pending_position_valid = true;
     xSemaphoreGive(s_position_mutex);
     return ESP_OK; /* actual publish happens from mqtt_publish_task */

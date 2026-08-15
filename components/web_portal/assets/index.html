@@ -217,7 +217,7 @@ async function refreshStatus() {
   if (s.position_available) {
     rows.push(["Position enabled", s.position_enabled]);
     rows.push(["Last fix", s.position_fix_valid
-      ? (s.position_latitude.toFixed(5) + ", " + s.position_longitude.toFixed(5) + " (" + s.position_altitude_m.toFixed(0) + "m)")
+      ? (s.position_latitude.toFixed(5) + ", " + s.position_longitude.toFixed(5) + " (" + s.position_altitude_m.toFixed(0) + "m, ±" + s.position_h_precision_m.toFixed(0) + "m)")
       : "none yet"]);
   }
   rows.push(["Variables", s.variable_count], ["Config generation", s.config_generation]);
@@ -548,9 +548,22 @@ async function refreshNetwork() {
 /* ---- Position (GNSS) reporting ---- */
 function positionFormFields(p) {
   return `
-    ${p.available ? "" : "<small>Position reporting requires network transport set to Cellular (Walter's GNSS is part of the cellular modem).</small>"}
+    <small>&#9888; Requires a physical GNSS/GPS antenna connected to the modem. Without one, the device will keep
+    trying and failing to get a fix (logged, harmless) but will never actually report a position.</small><br>
+    ${p.available ? "" : "<small>Position reporting also requires network transport set to Cellular (Walter's GNSS is part of the cellular modem).</small>"}
     <label><input type="checkbox" name="enabled" ${p.enabled ? "checked" : ""} ${p.available ? "" : "disabled"}> Enabled</label>
-    <label>Report interval (ms) <input type="number" name="interval_ms" value="${p.interval_ms}" ${p.available ? "" : "disabled"}></label>
+    <div class="row">
+      <div><label>Sample interval (ms) <input type="number" name="sample_interval_ms" value="${p.sample_interval_ms}" ${p.available ? "" : "disabled"} required></label></div>
+      <div><label>Log/aggregate interval (ms) <input type="number" name="log_interval_ms" value="${p.log_interval_ms}" ${p.available ? "" : "disabled"} required></label></div>
+    </div>
+    <small>Same idea as a sensor variable: a fix is attempted every sample interval; the fixes since the last log
+    interval are aggregated (per the checkboxes below) into one latitude/longitude/elevation/horizontal-precision
+    record and logged/published. Each GPS fix can itself take up to a minute and briefly drops the cellular
+    connection to use the modem's shared antenna, so keep the sample interval reasonably long.</small>
+    <label>Aggregates
+      ${AGG_BITS.map(([name, bit]) => `<label style="display:inline-block;width:auto;margin-right:.75rem">
+        <input type="checkbox" name="agg_${name}" ${(p.aggregate_mask & bit) ? "checked" : ""} ${p.available ? "" : "disabled"}> ${name}</label>`).join("")}
+    </label>
     <button type="submit" ${p.available ? "" : "disabled"}>Save position settings</button>
   `;
 }
@@ -562,7 +575,14 @@ async function refreshPosition() {
   form.onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    const body = { enabled: !!fd.get("enabled"), interval_ms: parseInt(fd.get("interval_ms"), 10) };
+    let mask = 0;
+    for (const [name, bit] of AGG_BITS) if (fd.get("agg_" + name)) mask |= bit;
+    const body = {
+      enabled: !!fd.get("enabled"),
+      sample_interval_ms: parseInt(fd.get("sample_interval_ms"), 10),
+      log_interval_ms: parseInt(fd.get("log_interval_ms"), 10),
+      aggregate_mask: mask,
+    };
     try {
       await api("/api/settings/position", { method: "PUT", body });
       $("#position-msg").textContent = "Saved."; $("#position-msg").className = "msg ok";

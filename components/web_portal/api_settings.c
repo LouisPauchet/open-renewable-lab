@@ -204,7 +204,9 @@ static esp_err_t position_get_handler(httpd_req_t *req)
 
     cJSON *o = cJSON_CreateObject();
     cJSON_AddBoolToObject(o, "enabled", p.enabled);
-    cJSON_AddNumberToObject(o, "interval_ms", p.interval_ms);
+    cJSON_AddNumberToObject(o, "sample_interval_ms", p.sample_interval_ms);
+    cJSON_AddNumberToObject(o, "log_interval_ms", p.log_interval_ms);
+    cJSON_AddNumberToObject(o, "aggregate_mask", p.aggregate_mask);
     cJSON_AddBoolToObject(o, "available", n.transport == TRANSPORT_CELLULAR);
     return wp_send_json(req, o);
 }
@@ -225,11 +227,21 @@ static esp_err_t position_put_handler(httpd_req_t *req)
 
     position_settings_t p = current;
     p.enabled = json_bool(body, "enabled", current.enabled);
-    p.interval_ms = (uint32_t)json_int(body, "interval_ms", (int)current.interval_ms);
+    p.sample_interval_ms = (uint32_t)json_int(body, "sample_interval_ms", (int)current.sample_interval_ms);
+    p.log_interval_ms = (uint32_t)json_int(body, "log_interval_ms", (int)current.log_interval_ms);
+    p.aggregate_mask = (uint8_t)json_int(body, "aggregate_mask", current.aggregate_mask) & AGG_ALL_VALID_BITS;
     cJSON_Delete(body);
 
-    if (p.enabled && p.interval_ms == 0) {
-        return wp_send_error(req, "400 Bad Request", "interval_ms must be > 0 when position reporting is enabled");
+    if (p.enabled && p.sample_interval_ms == 0) {
+        return wp_send_error(req, "400 Bad Request",
+                              "sample_interval_ms must be > 0 when position reporting is enabled");
+    }
+    if (p.enabled && p.log_interval_ms < p.sample_interval_ms) {
+        return wp_send_error(req, "400 Bad Request", "log_interval_ms must be >= sample_interval_ms");
+    }
+    if (p.enabled && p.aggregate_mask == 0) {
+        return wp_send_error(req, "400 Bad Request",
+                              "at least one aggregate (raw/mean/min/max/stddev) must be selected");
     }
 
     config_store_set_position_settings(&p);

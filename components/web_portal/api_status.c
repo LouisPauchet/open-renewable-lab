@@ -79,6 +79,7 @@ static esp_err_t status_handler(httpd_req_t *req)
             cJSON_AddNumberToObject(o, "position_latitude", fix.latitude);
             cJSON_AddNumberToObject(o, "position_longitude", fix.longitude);
             cJSON_AddNumberToObject(o, "position_altitude_m", fix.altitude_m);
+            cJSON_AddNumberToObject(o, "position_h_precision_m", fix.horizontal_accuracy_m);
             cJSON_AddNumberToObject(o, "position_timestamp_unix", (double)fix.timestamp_unix);
         }
     }

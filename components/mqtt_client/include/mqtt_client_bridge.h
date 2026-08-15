@@ -1,9 +1,10 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
-#include "cellular_transport.h"
 #include "esp_err.h"
+#include "sampling_engine.h" /* field_aggregate_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,12 +33,17 @@ esp_err_t mqttc_init(void);
 
 bool mqttc_is_ready(void);
 
-/* Queues a GNSS fix for publish to "<topic_prefix>/<device_id>/position"
- * (or the literal topic_prefix under mqtt.flat_telemetry) - respects
- * the same batching behavior as regular sensor publishes. Only the
- * most recent pending fix is kept if called again before the previous
- * one is sent. */
-esp_err_t mqttc_publish_position(const gnss_fix_t *fix);
+/* Queues one aggregated GNSS position record (latitude/longitude/
+ * elevation/horizontal-precision, each already reduced to
+ * raw/mean/min/max/stddev over the log interval - see gnss_position.c)
+ * for publish to "<topic_prefix>/<device_id>/position" (or the literal
+ * topic_prefix under mqtt.flat_telemetry) - respects the same batching
+ * behavior as regular sensor publishes. Only the most recent pending
+ * record is kept if called again before the previous one is sent. */
+esp_err_t mqttc_publish_position(int64_t timestamp_unix, bool time_is_synced, uint32_t sample_count,
+                                  uint8_t aggregate_mask, const field_aggregate_t *latitude,
+                                  const field_aggregate_t *longitude, const field_aggregate_t *elevation_m,
+                                  const field_aggregate_t *h_precision_m);
 
 /* Queues a battery voltage reading for publish to
  * "<topic_prefix>/<device_id>/battery" (or the literal topic_prefix
