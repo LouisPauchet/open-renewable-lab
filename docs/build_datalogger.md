@@ -2,16 +2,22 @@
 
 ## What do you need ?
 
-2 - Walter ESP32
-1 - Walter Feels Carrier Board
-3 - A box RSPRO 672365
-4 - A 3D printed support to old the walter feels in the box
-8 - LTE Antenna TAOGLAS FXUB63
-9 - GNSS Antenna TAOGLAS FXP-611
-6 - 2x SP11 2 Pin connectors (Male and Female) (Battery and Solar Panel)
+The numbers below match the callouts on the component photo referenced
+throughout the steps that follow.
+
+1 - Walter Feels Carrier Board https://www.gotronic.fr/art-module-walter-feels-39900.htm
+2 - Walter ESP32 https://www.gotronic.fr/art-carte-walter-esp32-s3-39898.htm
+3 - A box RSPRO 672365 https://fr.rs-online.com/web/p/boitiers-pour-usage-general/0672365
+4 - A 3D printed support to hold the walter feels in the box
 5 - 1 or more SP11 3 Pin connectors (Male and Female) (SDI12 Sensors)
-7- Wires
+6 - 2x SP11 2 Pin connectors (Male and Female) (Battery and Solar Panel)
+7 - Wires
+8 - LTE Antenna TAOGLAS FXUB63 https://www.gotronic.fr/art-antenne-flexible-4g-et-5g-fxub63-39916.htm
+9 - GNSS Antenna TAOGLAS FXP-611 https://www.gotronic.fr/art-antenne-cloud-gnss-fxp611-39917.htm
 10 - A pokawoke to drill in the box (available in AGF dept if you are at UNIS)
+
+*(A numbered component photo matching the list above still needs to be
+added here.)*
 
 You'll also need a soldering iron, heat shrink tubing (+ a lighter or hot
 air gun to shrink it), wire strippers, and a screwdriver.
@@ -19,8 +25,9 @@ air gun to shrink it), wire strippers, and a screwdriver.
 This page builds the **generic datalogger** - Walter, Walter Feels, box,
 antennas, battery/solar charging power, and SDI-12. It does not cover the
 ADS1115 analog-input add-on (the two 4-pin "AN1"/"AN2" connectors reading
-an instrumented sensor like a solar panel's voltage/current) - if you're
-building an **Open Renewable Lab** station specifically, come back to
+an instrumented source like a solar panel's or wind turbine's voltage/
+current) - if you're building an **Open Renewable Lab** station
+specifically, come back to
 [Getting started](getting-started.md) and [Hardware](hardware.md) once
 this base build is done.
 
@@ -93,8 +100,6 @@ TAOGLAS FXUB63) and the GNSS antenna (item 9, TAOGLAS FXP-611) to their
 u.FL connectors on the board, and route both antenna cables to wherever
 you're mounting the antennas themselves on/outside the enclosure.
 
-*(No photo yet for this specific step - if you have one, it belongs here.)*
-
 ### 6. Wire the plugs to the board
 
 <figure markdown>
@@ -124,14 +129,14 @@ those two labels if you're not adding that piece.
 </figcaption>
 </figure>
 
-### 8. Add a rubber foot/gasket
+### 8. Seal the cable lead-through
 
 <figure markdown>
-![Adding a rubber foot to the enclosure](pictures/Logger_Hardware_19_AddRubberOnBox.jpeg)
+![Adding a rubber grommet to the enclosure](pictures/Logger_Hardware_19_AddRubberOnBox.jpeg)
 <figcaption>
-A rubber foot/gasket on the enclosure - cheap insurance against scratching
-whatever surface the logger ends up sitting on, and helps the lid seat
-evenly.
+A rubber grommet/gasket around the cable lead-through - this is what keeps
+that entry point water-tight, not a cosmetic touch, so don't skip it even
+on an indoor build.
 </figcaption>
 </figure>
 
@@ -166,5 +171,5 @@ here:
 - [User Manual](USER_MANUAL.md) - first boot, connecting to the setup
   hotspot, and configuring SDI-12 sensors, MQTT, and networking.
 - Building an **Open Renewable Lab** station specifically (the ADS1115
-  analog add-on for instrumenting a solar panel)? Continue with
-  [Getting started](getting-started.md).
+  analog add-on for instrumenting a solar panel and/or wind turbine)?
+  Continue with [Getting started](getting-started.md).

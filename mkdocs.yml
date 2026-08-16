@@ -33,7 +33,7 @@ theme:
 nav:
   - Home: index.md
   - Build a Datalogger: build_datalogger.md
-  - Getting Started (20W PV panel): getting-started.md
+  - Getting Started (PV panel & wind turbine): getting-started.md
   - Firmware Downloads: firmware-downloads.md
   - User Manual: USER_MANUAL.md
   - Hardware: hardware.md
