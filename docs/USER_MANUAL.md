@@ -27,9 +27,10 @@ instead.
 12. [Backup and restore](#12-backup-and-restore)
 13. [Rebooting](#13-rebooting)
 14. [How the setup hotspot behaves](#14-how-the-setup-hotspot-behaves)
-15. [Troubleshooting](#15-troubleshooting)
-16. [Glossary](#16-glossary)
-17. [Quick reference](#17-quick-reference)
+15. [Power management (deep sleep)](#15-power-management-deep-sleep)
+16. [Troubleshooting](#16-troubleshooting)
+17. [Glossary](#17-glossary)
+18. [Quick reference](#18-quick-reference)
 
 ---
 
@@ -154,7 +155,7 @@ refreshes automatically every 5 seconds. Here's what each field means:
 | AP clients | How many devices are currently connected to the hotspot. |
 | Transport | Which network transport is configured: `unconfigured`, `wifi`, or `cellular`. |
 | Data link up | Whether the chosen transport (WiFi station / cellular) is actually connected right now. |
-| Time synced | Whether the device has obtained the correct current time (via internet time sync, or cellular network time). Until this is true, logged timestamps aren't reliable — see [Troubleshooting](#15-troubleshooting). |
+| Time synced | Whether the device has obtained the correct current time (via internet time sync, or cellular network time). Until this is true, logged timestamps aren't reliable — see [Troubleshooting](#16-troubleshooting). |
 | SD ready | Whether the microSD card is mounted and working. |
 | SD free/total | Free / total space on the SD card, in bytes. |
 | SD drop count | Number of log entries that failed to write (card removed, full, etc). Should stay at 0 in normal operation. |
@@ -296,7 +297,7 @@ remove it entirely (this does not delete already-logged data).
 
 ## 7. Setting up MQTT
 
-[MQTT](#16-glossary) lets your device publish data in near-real-time to a
+[MQTT](#17-glossary) lets your device publish data in near-real-time to a
 central server (a "broker"), which any dashboard, database, or script can
 subscribe to. This is optional — the device logs to SD card regardless of
 whether MQTT is configured.
@@ -356,7 +357,7 @@ with "mean" and "max" enabled might publish:
 - `ts` — Unix timestamp (seconds since 1970-01-01 UTC) of when this
   aggregate was finalized.
 - `time_synced` — `false` if the device hadn't yet obtained the correct
-  time when this was logged (see [Troubleshooting](#15-troubleshooting));
+  time when this was logged (see [Troubleshooting](#16-troubleshooting));
   treat `ts` with suspicion if so.
 - `n` — how many raw samples went into this aggregate.
 - Then one field per aggregate you enabled (`raw`, `mean`, `min`, `max`,
@@ -680,12 +681,104 @@ reboot if nothing is holding it open.
 
 ---
 
-## 15. Troubleshooting
+## 15. Power management (deep sleep)
+
+For a long-term remote/battery/solar deployment, the device can go a step
+further than just idling efficiently — it can fully **deep-sleep** between
+things it actually needs to do (a weather station sampling every 10–30
+minutes, or a PV logger sampling at 1 Hz and aggregating to 1-minute
+means, are the two motivating cases). This is **off by default** — nothing
+about how the device behaves changes unless you turn it on.
+
+> ⚠ Deep sleep is a fundamentally different execution mode, not just a
+> lower-power idle: the device loses all RAM and reboots on every wake.
+> It's opt-in and disabled by default specifically so a student setting up
+> a device for the first time never has to think about it — turn it on
+> only once you understand what it does below.
+
+### 15.1 What deep sleep does
+
+While enabled, the device periodically checks whether anything configured
+— a Variable, Position reporting, Battery polling, or MQTT — needs
+attention soon. If nothing does for at least the **minimum sleep
+duration**, it:
+
+1. Flushes anything pending (finishes writing to the SD card, sends any
+   buffered MQTT batch).
+2. Saves just enough state to resume cleanly (in-progress sensor averages,
+   when each thing is next due) to a small pocket of memory that survives
+   sleep.
+3. Powers everything down and sleeps until the next thing is due.
+4. On wake, reboots, restores that saved state, and resumes — the WiFi/
+   cellular connection is re-established fresh each time rather than kept
+   alive through the sleep.
+
+Because of that reboot-per-wake cycle, deep sleep is only worth it for
+gaps longer than the **minimum sleep duration** setting (default: 1
+minute) — shorter gaps aren't worth the reconnect overhead, so the device
+just stays awake and idles normally instead.
+
+### 15.2 "Allow deep sleep to skip samples/polls"
+
+Some settings — a Variable, Position reporting, Battery polling — have
+their own **sample interval** shorter than their **log interval**,
+meaning several readings get averaged into one aggregate (see
+[section 6.3](#63-understanding-sampling-vs-logging-vs-aggregation)). If
+the device slept through one of those in-between sample times, that
+average would silently be built from fewer readings than you configured —
+so **by default, this blocks deep sleep entirely** rather than degrade
+your data without telling you.
+
+Each such setting has its own **"allow deep sleep to skip"** checkbox.
+Leave it unchecked (the default) to keep sleep blocked until you either
+disable that setting or set its sample interval equal to its log interval.
+Check it to explicitly accept the trade-off: the device may now sleep
+through some of that setting's sample windows, so its aggregate is
+occasionally built from fewer readings than configured — usually a fine
+trade for a slow-moving quantity like temperature, less fine for something
+you specifically want a tight average of.
+
+A setting whose sample interval already equals its log interval (the
+common case — one reading in, one reading out) never blocks sleep, and the
+checkbox has no effect for it.
+
+### 15.3 The hotspot on a sleeping device
+
+A device that's deep-sleeping most of the time doesn't force its hotspot
+on during every brief wake the way a normal boot does (see
+[section 14](#14-how-the-setup-hotspot-behaves)) — otherwise sleeping
+would barely save anything. This means a sleeping device is **not
+reachable through the portal** most of the time.
+
+To reach it anyway, use **Stay awake** in the Power management section:
+set a number of minutes and click the button. This immediately forces the
+hotspot on and holds the device in normal (non-sleeping) operation for
+that window, so you can connect and make changes — click **Cancel
+stay-awake** to end the window early. This is the only way to reach a
+sleep-enabled device short of a full power-cycle, since this hardware has
+no physical force-setup button.
+
+### 15.4 Settings
+
+- **Enable deep sleep** — master on/off switch. Off by default.
+- **Minimum sleep duration (ms)** — don't bother sleeping for a gap
+  shorter than this; just stay awake and idle normally instead. Default:
+  `60000` (1 minute).
+
+The **Currently** line shows whether the device is eligible to sleep right
+now or blocked (and why) — also visible on the main Status panel whenever
+deep sleep is enabled.
+
+---
+
+## 16. Troubleshooting
 
 **Can't find the `WalterSensor-XXXX` network.**
 Confirm the device is powered on. If it's been running for a while with no
 one connected, the hotspot may have timed out — power-cycle the device to
 get a fresh 5-minute window (see [section 14](#14-how-the-setup-hotspot-behaves)).
+If deep sleep is enabled, use **Stay awake** instead of power-cycling (see
+[section 15.3](#153-the-hotspot-on-a-sleeping-device)).
 
 **Captive portal page doesn't pop up automatically.**
 Manually browse to `http://192.168.4.1/`.
@@ -742,7 +835,7 @@ recording your new one somewhere safe, matters.
 
 ---
 
-## 16. Glossary
+## 17. Glossary
 
 | Term | Meaning |
 |---|---|
@@ -761,7 +854,7 @@ recording your new one somewhere safe, matters.
 
 ---
 
-## 17. Quick reference
+## 18. Quick reference
 
 **Default portal password**: `walter1234` (change immediately)
 
@@ -789,6 +882,9 @@ recording your new one somewhere safe, matters.
 **Default position sample/log interval**: 600,000 ms (10 minutes) each
 
 **Max variables per device**: 32
+
+**Deep sleep**: off by default; minimum sleep duration 60,000 ms (1
+minute) once enabled
 
 **Session timeout**: 30 minutes of inactivity (up to 4 concurrent sessions)
 

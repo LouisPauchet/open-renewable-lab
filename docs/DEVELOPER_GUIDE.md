@@ -5,7 +5,7 @@ modifying, or extending the code. If you just want to *use* a device, see
 [USER_MANUAL.md](USER_MANUAL.md) instead.
 
 It assumes basic C familiarity but not prior ESP-IDF/embedded experience —
-unfamiliar terms are explained inline or in the [glossary](#20-glossary)
+unfamiliar terms are explained inline or in the [glossary](#22-glossary)
 at the end.
 
 ---
@@ -27,12 +27,13 @@ at the end.
 13. [MQTT (`mqtt_client`)](#13-mqtt-mqtt_client)
 14. [Cellular integration (`cellular_transport`)](#14-cellular-integration-cellular_transport)
 15. [Position reporting (`gnss_position`)](#15-position-reporting-gnss_position)
-16. [Device identification (`device_id`)](#16-device-identification-device_id)
-17. [Web portal (`web_portal`)](#17-web-portal-web_portal)
-18. [Known limitations and low-confidence areas](#18-known-limitations-and-low-confidence-areas)
-19. [Testing without Walter Feels hardware](#19-testing-without-walter-feels-hardware)
-20. [How to extend the firmware](#20-how-to-extend-the-firmware)
-21. [Glossary](#21-glossary)
+16. [Power management / deep sleep (`power_manager`)](#16-power-management--deep-sleep-power_manager)
+17. [Device identification (`device_id`)](#17-device-identification-device_id)
+18. [Web portal (`web_portal`)](#18-web-portal-web_portal)
+19. [Known limitations and low-confidence areas](#19-known-limitations-and-low-confidence-areas)
+20. [Testing without Walter Feels hardware](#20-testing-without-walter-feels-hardware)
+21. [How to extend the firmware](#21-how-to-extend-the-firmware)
+22. [Glossary](#22-glossary)
 
 ---
 
@@ -76,7 +77,7 @@ you start reading source:
   This was missing in the environment this firmware was originally written
   in (a submodule that hadn't been fetched), so parts of `mqtt_client` were
   written against documented API behavior rather than checked headers — see
-  [section 18](#18-known-limitations-and-low-confidence-areas).
+  [section 19](#19-known-limitations-and-low-confidence-areas).
 
 ```sh
 idf.py set-target esp32s3
@@ -169,28 +170,36 @@ business logic. Exact sequence:
 2. `config_store_init()` — mounts NVS, loads (or defaults) the config.
 3. `config_store_get_snapshot()` — a local copy used for the rest of boot
    (safe because `net.transport` can't change without a reboot anyway).
-4. `sdi12_bus_init()` — if it fails (pins unset), falls back to
+4. `power_manager_init()` — checks whether this boot was woken from a
+   power_manager-initiated deep sleep and, if so, hands each component's
+   RTC-persisted state back via its own `*_restore_sleep_state()` (must
+   run before steps 6/9/12 below, which is why it's this early) - see
+   [16](#16-power-management--deep-sleep-power_manager). Also spawns
+   `power_manager_task`, which just idles - re-checking `config_store`
+   each cycle - while `power.enabled` is false, the shipped default.
+5. `sdi12_bus_init()` — if it fails (pins unset), falls back to
    `stub_sensor_read` for `BUS_TYPE_SDI12` instead of the real driver.
-5. `i2c_bus_init()` — same fallback pattern for `BUS_TYPE_I2C`.
-6. `sampling_engine_init()` — spawns the bus-scheduler and aggregation
-   tasks (drivers were already registered in steps 4-5).
-7. A small debug task registers as a result sink and logs every finalized
+6. `i2c_bus_init()` — same fallback pattern for `BUS_TYPE_I2C`.
+7. `sampling_engine_init()` — spawns the bus-scheduler and aggregation
+   tasks (drivers were already registered in steps 5-6).
+8. A small debug task registers as a result sink and logs every finalized
    aggregate to the serial console — always active, useful during bring-up.
-8. `sd_logger_init()` — best-effort; registers as a result sink on success,
+9. `sd_logger_init()` — best-effort; registers as a result sink on success,
    logs a warning and continues on failure (no card, pins unset, etc).
-9. `net_manager_init()` — brings up the SoftAP (always) and WiFi STA (only
-   if `transport == TRANSPORT_WIFI`).
-10. `web_portal_init()` — starts the captive-portal DNS hijack and HTTP
+10. `net_manager_init(power_manager_is_sleep_wake())` — brings up the
+    SoftAP (skipping the normal 5-minute boot-grace window on a sleep-wake
+    boot) and WiFi STA (only if `transport == TRANSPORT_WIFI`).
+11. `web_portal_init()` — starts the captive-portal DNS hijack and HTTP
     server.
-11. `time_sync_init()` — starts the SNTP client (opportunistic, harmless
+12. `time_sync_init()` — starts the SNTP client (opportunistic, harmless
     without connectivity).
-12. If `transport == TRANSPORT_CELLULAR`: `cellular_transport_init()`, and
+13. If `transport == TRANSPORT_CELLULAR`: `cellular_transport_init()`, and
     only on its success, `gnss_position_init()`.
-13. `mqttc_init()` — always called; registers as a result sink and picks
+14. `mqttc_init()` — always called; registers as a result sink and picks
     a backend (or `NULL` if transport is unconfigured, in which case MQTT
     stays fully inert).
 
-Notice steps 4-8 all use the same pattern: **attempt init, register the
+Notice steps 5-9 all use the same pattern: **attempt init, register the
 real driver/sink on success, fall back to a safe default (stub driver, or
 simply not registering a sink) on failure** — nothing in this list can
 abort boot.
@@ -215,6 +224,7 @@ FreeRTOS tasks in this firmware, and what owns what:
 | `gnss_pos` | gnss_position | Periodic GNSS fix acquisition | **Not** watchdog-registered (see below) |
 | `httpd` (esp_http_server internal) | web_portal | HTTP request handling | |
 | `dns_hijack` | web_portal | UDP:53 captive-portal DNS | |
+| `power_mgr` | power_manager | Sleep-eligibility checks, deep sleep entry | Idle (just polls `config_store`) unless `power.enabled` - see [16](#16-power-management--deep-sleep-power_manager) |
 
 ### 6.1 Bus ownership, not mutexes, for periodic access
 
@@ -334,7 +344,7 @@ It has two `#if`-branched variants selected via a Kconfig choice
 Node Board Selection"): the production Walter Feels mapping (below), and a
 minimal I2C-only mapping for testing on a plain ESP32 DevKit V1 without a
 Walter Feels board in hand — see
-[section 19](#19-testing-without-walter-feels-hardware) for that workflow.
+[section 20](#20-testing-without-walter-feels-hardware) for that workflow.
 
 Most pins are now confirmed against the actual Walter Feels schematic
 (supplied mid-project):
@@ -480,7 +490,7 @@ earlier assumption that HDC1080/LPS22HB lived there instead.
 `ads111x_read_channel()` uses a fixed configuration — PGA ±4.096V
 full-scale, single-shot mode, 128SPS (`ADS111X_CONVERSION_DELAY_MS = 10`
 padding above the ~7.8ms conversion time) — and returns a **voltage in
-volts** (`raw / 32768.0 * 4.096`). See [section 19.1](#191-adding-a-new-i2c-sensor-driver)
+volts** (`raw / 32768.0 * 4.096`). See [section 21.1](#211-adding-a-new-i2c-sensor-driver)
 for how to add another device type.
 
 ---
@@ -648,9 +658,19 @@ transport:
 `apply_wifi_mode_for_ap_state()` callback translates AP-policy state
 changes into actual `esp_wifi_set_mode()` calls, combined with whether STA
 is also wanted (`compute_desired_mode()` picks `WIFI_MODE_NULL` / `_AP` /
-`_STA` / `_APSTA`). `net_manager_force_ap_on()` is an unused-today
-extension point for a future physical button
-(`BOARD_PIN_FORCE_AP_BUTTON`).
+`_STA` / `_APSTA`). `net_manager_force_ap_on()` remains an extension point
+for a future physical button (`BOARD_PIN_FORCE_AP_BUTTON`), and is also
+what `power_manager_request_stay_awake()` calls today to force the portal
+reachable on a sleep-enabled device - see
+[16.3](#163-wake-cause-handling).
+
+`net_manager_init(suppress_ap_boot_grace)` and `ap_policy_init(suppress_boot_grace)`
+both take a bool (from `power_manager_is_sleep_wake()`, or always `false`
+when deep sleep isn't in use): `true` skips `BOOT_GRACE` entirely and
+starts directly in `AP_OFF`, since a device waking briefly from deep sleep
+just to take a reading shouldn't force its AP on every single time. A
+genuine power-on/reset always passes `false` and gets the diagram above
+unchanged.
 
 The AP SSID is `WalterSensor-XXYY` (last two MAC bytes, uppercase hex),
 **open** (`WIFI_AUTH_OPEN` — no WiFi password; the portal's own login is
@@ -742,7 +762,7 @@ Uses the documented stable esp-mqtt API (`broker.address.uri`,
 `credentials.*`, `broker.verification.crt_bundle_attach` for TLS, or
 `skip_cert_common_name_check` for the lab-friendly insecure-TLS toggle).
 Not verified against local source in this checkout — see
-[section 18](#18-known-limitations-and-low-confidence-areas).
+[section 19](#19-known-limitations-and-low-confidence-areas).
 
 ---
 
@@ -827,7 +847,7 @@ Each cycle:
 WalterModem's own `estimatedConfidence` - "the estimated horizontal
 confidence of the fix in meters" per its header comment; not independently
 verified beyond that, same confidence caveat as the rest of this
-component (see [section 18](#18-known-limitations-and-low-confidence-areas)).
+component (see [section 19](#19-known-limitations-and-low-confidence-areas)).
 
 Requires a physical GNSS antenna connected to the modem - without one,
 `gnssPerformAction()` just fails/times out repeatedly rather than ever
@@ -840,7 +860,182 @@ Not registered with the task watchdog — see
 
 ---
 
-## 16. Device identification (`device_id`)
+## 16. Power management / deep sleep (`power_manager`)
+
+> ⚠ This component has only been build-verified (`idf.py build`), not
+> exercised on real hardware — deliberately deferred (the deployments it
+> targets won't be tested for months). Treat the design below as sound but
+> unconfirmed; work through the verification checklist at the end of this
+> section before relying on it in the field. `power.enabled` defaults to
+> `false`, so nothing here runs at all until a device explicitly opts in.
+
+Unlike everything else in this firmware, deep sleep is a different
+*execution model*, not just another background task: `esp_deep_sleep_start()`
+powers down the CPU, RAM, and radios entirely and reboots `app_main()` from
+scratch on wake (`esp_timer_get_time()` resets to 0; only RTC memory and
+the RTC-backed wall clock survive). `power_manager` is the one component
+that owns this transition; every other component just exposes small
+sleep-state accessors that `power_manager` calls — see their own headers
+(`sampling_engine.h`, `gnss_position.h`, `battery_monitor.h`,
+`mqtt_client_bridge.h`, `sd_logger.h`) for the exact shapes.
+
+### 16.1 Eligibility algorithm
+
+`power_manager_task()` wakes every `ELIGIBILITY_CHECK_MS = 5000` and, only
+while `power.enabled` and no stay-awake window is active, does this:
+
+1. Bail out if the wall clock isn't synced yet (`time(NULL) <
+   TIME_SYNC_EPOCH_THRESHOLD`) — every deadline in this design is a Unix
+   timestamp, not an `esp_timer_get_time()` offset, specifically *because*
+   the latter resets to 0 across a sleep and the former is expected to
+   survive it (see [16.4](#164-the-time-persistence-assumption) for the
+   one part of this design that still needs real-hardware confirmation).
+2. Call each component's `*_get_sleep_status()` (`sampling_engine`,
+   `gnss_position`, `battery_monitor`, `mqtt_client_bridge`) and fold the
+   results together (`fold_status()` in `power_manager.c`):
+   - Any status reporting `blocked = true` (a variable/position field
+     sampling faster than it logs without `allow_skip_during_sleep`, or
+     MQTT in non-batch/always-connected mode) short-circuits the whole
+     decision — sleep does not engage this cycle, for any duration, full
+     stop.
+   - Otherwise, every status with `has_schedulable && next_due_is_synced`
+     contributes its `next_due_unix`; the earliest one across all sources
+     becomes the candidate wake time.
+   - A source with nothing schedulable (e.g. position reporting disabled)
+     contributes nothing either way.
+3. If nothing was blocked but also nothing was schedulable, there's
+   nothing to gain from sleeping — skip this cycle too.
+4. Otherwise compute `gap_ms = earliest_due_unix - now`. If it's shorter
+   than `power.min_sleep_duration_ms`, skip - not worth a reboot+reconnect
+   cycle for a gap that small.
+5. Otherwise: `mqttc_flush_now()` (forces an immediate batch send if MQTT
+   batch mode is on; a no-op otherwise) and `sd_logger_flush_now()` (drains
+   queued rows, closes any open wide-format row), snapshot every
+   component's in-flight state into RTC memory (16.2), and call
+   `esp_sleep_enable_timer_wakeup(gap_ms * 1000)` +
+   `esp_deep_sleep_start()`.
+
+`allow_skip_during_sleep` (on `variable_config_t`, `position_settings_t`,
+`battery_settings_t`) is what moves a source from "blocks outright" to
+"just contributes a bound" — see its doc comment in `config_schema.h` for
+the full reasoning. Battery polling never blocks outright at all (no
+sample/log split to lose fidelity from — see `battery_settings_t`'s own
+comment); MQTT non-batch mode always blocks outright (no
+`allow_skip_during_sleep`-style opt-out - staying connected is the entire
+point of that mode).
+
+### 16.2 RTC memory layout
+
+```c
+RTC_FAST_ATTR static uint32_t s_rtc_magic;                             // guards against trusting stale/foreign content
+RTC_FAST_ATTR static uint32_t s_rtc_variable_count;
+RTC_FAST_ATTR static sampling_sleep_entry_t s_rtc_variables[MAX_TRACKED_VARIABLES]; // capped at 8, not MAX_VARIABLES (32)
+RTC_FAST_ATTR static bool s_rtc_gnss_valid;
+RTC_FAST_ATTR static gnss_sleep_entry_t s_rtc_gnss;
+RTC_FAST_ATTR static battery_sleep_entry_t s_rtc_battery;
+RTC_FAST_ATTR static int64_t s_stay_awake_until_unix;                  // NOT gated behind s_rtc_magic - see below
+```
+
+`RTC_FAST_ATTR`, not the more commonly-seen `RTC_DATA_ATTR` (which lands in
+RTC *slow* memory): an early version of this component used
+`RTC_DATA_ATTR` and hit a real link failure, `region 'rtc_slow_seg'
+overflowed by 1704 bytes` — RTC slow memory is small and already shared
+with WiFi/BT/`esp_system`'s own retained state. RTC fast memory is only
+reachable from the PRO CPU and normally reserved for the ULP coprocessor,
+which this project never uses, so `power_manager` has it entirely to
+itself. Same deep-sleep-survival guarantee either way, just a different
+physical bank — if you add more RTC-persisted state here later and hit the
+same class of link error again, that's the first thing to check.
+
+`MAX_TRACKED_VARIABLES = 8`, not `MAX_VARIABLES = 32`: even RTC fast
+memory couldn't comfortably fit 32 full `aggregator_t` accumulators, and
+every deployment this feature targets (a handful of weather-station or
+PV-logger variables) is nowhere near that limit in practice. A variable
+beyond the cap just starts its aggregate fresh after a sleep instead of
+resuming it — `sampling_engine_get_sleep_state()`'s `max_count` parameter
+truncates rather than errors, same as sd_logger's `MAX_INTERVAL_GROUPS`
+pattern.
+
+`s_stay_awake_until_unix` is deliberately **not** gated behind
+`s_rtc_magic`/wake-cause validation the way the rest of this state is: a
+stay-awake request needs to survive even a sleep that starts moments after
+it was set (a race between the portal's POST handler and
+`power_manager_task`'s own next iteration), and a stale/garbage value here
+is self-correcting anyway — `power_manager_stay_awake_active()` treats
+anything `<= time(NULL)` as inactive, so leftover content from a previous
+run just reads as "not active" until a fresh request sets it again.
+
+### 16.3 Wake-cause handling
+
+`power_manager_init()` runs very early in `app_main()` — right after
+`config_store_init()`, before `sampling_engine_init()`/
+`battery_monitor_init()` — and checks `esp_sleep_get_wakeup_causes()`
+(the bitmask form; the singular `esp_sleep_get_wakeup_cause()` is
+deprecated in this ESP-IDF version) for the `ESP_SLEEP_WAKEUP_TIMER` bit
+**and** `s_rtc_magic == RTC_MAGIC`. Both conditions matter: the wake cause
+alone doesn't prove the RTC content is actually ours (ESP-IDF only
+guarantees RTC memory survives deep sleep and most resets, not a genuine
+power-on — content on a true POR is undefined, not zeroed), and the magic
+value alone doesn't prove this reset was a timer wake rather than, say, a
+crash-triggered reboot that happened to leave old RTC content sitting
+around. Only when both agree does `power_manager_init()` call each
+component's `*_restore_sleep_state()`; otherwise every RTC field is reset
+to a clean slate and every component initializes exactly as it does on a
+first-ever boot.
+
+`power_manager_is_sleep_wake()` — the single bit of information this
+whole check boils down to — feeds into `net_manager_init()`'s
+`suppress_ap_boot_grace` parameter, so a device waking briefly just to
+take a reading doesn't force its AP/portal on for 5 minutes every single
+time the way a genuine power-on does (see [12](#12-networking-net_manager)
+and `ap_policy_init()`'s own parameter). A genuine boot, or a stay-awake
+request made during an already-awake window (`net_manager_force_ap_on()`),
+still gets the normal grace window.
+
+### 16.4 The time-persistence assumption
+
+Every deadline `power_manager` schedules against is a Unix wall-clock
+timestamp (`time(NULL)`), converted to/from each component's internal
+`esp_timer_get_time()` epoch only at the moment of snapshot/restore. This
+relies on ESP-IDF's system time genuinely surviving a deep sleep/wake
+cycle correctly — expected behavior per ESP-IDF's own docs, but **not
+independently verified on this hardware**, and the linchpin of the entire
+persistence design: if it doesn't hold, every restored deadline would be
+wrong by however much wall-clock time drifted or reset across the sleep.
+Confirm this first, in isolation, before trusting any of the rest of this
+component — see the checklist below.
+
+### 16.5 Verification checklist (not yet run)
+
+In order, on real hardware, not just `idf.py build` — this session's track
+record is that much smaller sleep-related changes (light sleep + SDMMC,
+an on-demand LTC4015 toggle) both produced real, non-obvious hardware
+failures that a clean build gave no indication of:
+
+1. With `power.enabled = false` (the shipped default), confirm normal
+   operation is completely unaffected — the safety net this whole feature
+   leans on.
+2. Confirm `time(NULL)` survives a deep-sleep/wake cycle correctly (16.4)
+   before trusting anything else here.
+3. Enable with one simple variable (`sample_interval_ms == log_interval_ms`),
+   confirm sleep/wake cycles and that SD data has no gaps/corruption
+   across several cycles.
+4. Confirm a genuine power-cycle still gets the normal 5-minute AP grace
+   window, and a timer-wake does not (16.3).
+5. Add a fast (`sample_interval_ms < log_interval_ms`) variable without
+   `allow_skip_during_sleep` — confirm it blocks sleep outright, and the
+   portal's status line shows why.
+6. Set `allow_skip_during_sleep` on it — confirm sleep now proceeds and
+   the variable's aggregate just folds fewer samples across a sleep gap
+   rather than breaking anything.
+7. Test with MQTT batch mode enabled — confirm `mqttc_flush_now()`
+   actually sends pending data before sleeping.
+8. Test the stay-awake override end-to-end from the portal, including the
+   race case in 16.2 (trigger it right as a sleep would otherwise start).
+
+---
+
+## 17. Device identification (`device_id`)
 
 A tiny, dependency-light component: `device_id_get()` reads the ESP32's
 factory-programmed MAC (`esp_read_mac(mac, ESP_MAC_WIFI_STA)`) once, caches
@@ -851,9 +1046,9 @@ and logged in the boot banner.
 
 ---
 
-## 17. Web portal (`web_portal`)
+## 18. Web portal (`web_portal`)
 
-### 17.1 Structure
+### 18.1 Structure
 
 ```
 web_portal/
@@ -869,7 +1064,7 @@ web_portal/
 └── assets/index.html       # the entire SPA - embedded into the firmware image
 ```
 
-### 17.2 Route matching order matters
+### 18.2 Route matching order matters
 
 `esp_http_server` matches registered URI handlers **in registration
 order**, first match wins (confirmed from `httpd_find_uri_handler()` in
@@ -881,7 +1076,7 @@ captive-portal probe paths (`/generate_204`, `/hotspot-detect.html`,
 expected "no portal here" response) is what triggers the captive-browser
 popup.
 
-### 17.3 Authentication
+### 18.3 Authentication
 
 Login page + server-side session, not HTTP Basic (avoids retransmitting the
 password on every request, and the ugly native browser auth dialog).
@@ -894,7 +1089,7 @@ slots are full, the soonest-to-expire is evicted. Every `/api/*` handler
 except `/api/login` calls `wp_auth_require(req)` first, which sends the 401
 response itself on failure so the handler can just `return ESP_OK`.
 
-### 17.4 Full REST API reference
+### 18.4 Full REST API reference
 
 All routes except `/api/login` require a valid session cookie.
 
@@ -902,7 +1097,7 @@ All routes except `/api/login` require a valid session cookie.
 |---|---|---|---|
 | POST | `/api/login` | `{password}` | Sets the session cookie |
 | POST | `/api/logout` | — | Clears the session |
-| GET | `/api/status` | — | See [section 17.5](#175-status-response-fields) |
+| GET | `/api/status` | — | See [section 18.5](#185-status-response-fields) |
 | GET | `/api/variables` | — | Array of variables |
 | POST | `/api/variables` | variable object (no `id`) | Returns `{id}` |
 | PUT | `/api/variables/{id}` | variable object | |
@@ -913,6 +1108,8 @@ All routes except `/api/login` require a valid session cookie.
 | GET/PUT | `/api/settings/mqtt` | `mqtt_settings_t`-shaped JSON | `password` is write-only (never echoed; a `password_set` bool is returned instead) |
 | GET/PUT | `/api/settings/network` | `net_settings_t`-shaped JSON | Changing `transport` returns `reboot_required: true` |
 | GET/PUT | `/api/settings/position` | `{enabled, interval_ms}` | GET also includes an `available` bool (`transport == cellular`) |
+| GET/PUT | `/api/settings/power` | `{enabled, min_sleep_duration_ms}` | GET also includes `blocked`/`blocked_reason`/`stay_awake_active`/`stay_awake_until_unix` - see [section 16](#16-power-management--deep-sleep-power_manager) |
+| POST | `/api/power/stay-awake` | `{minutes}` | `0` cancels an active window; forces the AP on via `power_manager_request_stay_awake()` |
 | PUT | `/api/settings/password` | `{old, new}` | `new` must be ≥4 chars |
 | GET | `/api/settings/export` | — | Full config JSON, secrets redacted (`portal_password_hash` omitted; `mqtt.password`/`wifi_sta_password`/`cellular_pin` blanked) |
 | POST | `/api/settings/import` | Full config JSON | Preserves current secrets for any field left blank/omitted, rather than wiping them |
@@ -938,7 +1135,7 @@ sample before it reaches the aggregator (see `sampling_engine.c`'s
 `bus_scheduler_task` and `sampling_engine_read_once`) - defaults `(1.0, 0.0)`
 are a no-op.
 
-### 17.5 Status response fields
+### 18.5 Status response fields
 
 `GET /api/status` (see `api_status.c`):
 
@@ -952,7 +1149,7 @@ are a no-op.
 `position_timestamp_unix` — and finally `variable_count`,
 `config_generation`.
 
-### 17.6 The SPA
+### 18.6 The SPA
 
 `assets/index.html` is a single self-contained file (inline `<style>` and
 `<script>`, no build step, no framework) embedded into the firmware binary
@@ -964,7 +1161,7 @@ the SPA outgrows embedding in the firmware image.
 
 ---
 
-## 18. Known limitations and low-confidence areas
+## 19. Known limitations and low-confidence areas
 
 Ranked roughly by how much you should distrust them before relying on
 them in a real deployment:
@@ -996,7 +1193,15 @@ them in a real deployment:
    silently, logged) if you combine many variables, short log intervals,
    and a long batch interval — see the sizing note in
    [USER_MANUAL.md §7.4](USER_MANUAL.md#74-batch-transmission-saving-power).
-9. **Automatic light sleep (`CONFIG_PM_ENABLE`) is off, deliberately.**
+9. **`power_manager` (deep sleep)** — build-verified only, not exercised
+   on real hardware; `power.enabled` defaults to `false` so this can't
+   affect a device unless explicitly turned on. See
+   [section 16](#16-power-management--deep-sleep-power_manager),
+   especially [16.4](#164-the-time-persistence-assumption) (the
+   unconfirmed assumption the whole design leans on) and
+   [16.5](#165-verification-checklist-not-yet-run) (what to run before
+   trusting it in the field).
+10. **Automatic light sleep (`CONFIG_PM_ENABLE`) is off, deliberately.**
    Confirmed on real hardware to cause a permanent boot hang right after
    "sampling engine started" — reproduced with every other variable ruled
    out (see `sdkconfig.defaults`'s own comment on these two options for
@@ -1009,7 +1214,7 @@ them in a real deployment:
 
 ---
 
-## 19. Testing without Walter Feels hardware
+## 20. Testing without Walter Feels hardware
 
 If you don't have a Walter/Walter Feels board yet, you can still exercise
 the sensor pipeline, the config store, and the web portal end-to-end on a
@@ -1018,7 +1223,7 @@ ADS1115 ADC boards) — SDI-12, SD card, and cellular are simply left
 disabled, exactly like they would be on real hardware with those pins
 unset (see [section 8](#8-board-pin-mapping-board_pins)).
 
-### 19.1 Why this needs more than flashing the same firmware
+### 20.1 Why this needs more than flashing the same firmware
 
 Two things differ, not just the board_pins.h values:
 
@@ -1041,7 +1246,7 @@ They're independent settings (nothing stops you from selecting the wrong
 combination), but only `esp32` + `ESP32_DEVKIT_TEST` and `esp32s3` +
 `WALTER_FEELS` are meaningful pairings.
 
-### 19.2 Step by step
+### 20.2 Step by step
 
 ```sh
 idf.py set-target esp32
@@ -1088,7 +1293,7 @@ signal into an ADS1115 powered from the DevKit's 3.3V rail will exceed
 that limit no matter what gain is selected; that board needs to be
 powered at 5V instead (or the signal scaled down with a divider first).
 
-### 19.3 Component-manager target gating (already handled)
+### 20.3 Component-manager target gating (already handled)
 
 `main/idf_component.yml`'s `dptechnics/walter-modem` dependency is gated
 with a component-manager `rules: - if: "target == esp32s3"` clause (that
@@ -1103,9 +1308,9 @@ confirmed by an actual `esp32` build, not just inferred from the manifest.
 
 ---
 
-## 20. How to extend the firmware
+## 21. How to extend the firmware
 
-### 20.1 Adding a new I2C sensor driver
+### 21.1 Adding a new I2C sensor driver
 
 1. Pick an unused `device_type` number and add a
    `#define I2C_DEVICE_TYPE_<NAME> <n>` to
@@ -1125,13 +1330,13 @@ confirmed by an actual `esp32` build, not just inferred from the manifest.
    you want a nicer label — see `assets/index.html`'s `variableFormFields()`
    for where device type is currently a bare number input).
 
-### 20.2 Adding a new REST endpoint
+### 21.2 Adding a new REST endpoint
 
 1. Add your handler function to the relevant `api_*.c` file (or create a
    new one, following `api_bus.c` as a minimal example).
 2. Register it in that file's `..._register_routes(httpd_handle_t server)`
    function — **register specific routes before any wildcard/catch-all**
-   (see [17.2](#172-route-matching-order-matters)).
+   (see [18.2](#182-route-matching-order-matters)).
 3. If it's a new file, declare the register function in
    `web_portal_internal.h`, call it from `web_portal.c`'s `web_portal_init()`,
    and add the `.c` file to `components/web_portal/CMakeLists.txt`.
@@ -1140,7 +1345,7 @@ confirmed by an actual `esp32` build, not just inferred from the manifest.
    `wp_read_json_body` helpers from `wp_common.c` for consistent response
    shapes.
 
-### 20.3 Adding a new config field
+### 21.3 Adding a new config field
 
 1. Add the field to the appropriate struct in
    `components/config_store/include/config_schema.h`.
@@ -1157,7 +1362,7 @@ confirmed by an actual `esp32` build, not just inferred from the manifest.
 
 ---
 
-## 21. Glossary
+## 22. Glossary
 
 | Term | Meaning |
 |---|---|
