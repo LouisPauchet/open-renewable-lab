@@ -126,7 +126,7 @@ solar charging, and SDI-12 connections at this stage.
 Label every external connector so nobody has to guess later, and mark the
 battery chemistry the box is built for - Walter Feels' onboard LTC4015
 charger is configured for one chemistry at a time (see
-<a href="USER_MANUAL.md#65-onboard-walter-feels-sensors-battery-temperature-humidity-pressure">USER_MANUAL.md §6.5</a>),
+[USER_MANUAL.md §6.5](USER_MANUAL.md#65-onboard-walter-feels-sensors-battery-temperature-humidity-pressure)),
 so a clear warning label prevents someone plugging in the wrong battery
 type. This example also shows the optional AN1/AN2 analog inputs - skip
 those two labels if you're not adding that piece.
@@ -151,7 +151,7 @@ on an indoor build.
 <figcaption>
 Insert a FAT32-formatted microSD card into the slot on the board - this is
 where sensor data gets logged locally regardless of whether MQTT is set
-up (see <a href="USER_MANUAL.md#101-on-the-sd-card">USER_MANUAL.md §10.1</a>).
+up (see [USER_MANUAL.md §10.1](USER_MANUAL.md#101-on-the-sd-card)).
 </figcaption>
 </figure>
 

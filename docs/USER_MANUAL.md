@@ -193,7 +193,7 @@ Click **+ Add variable** under the Variables section. You'll be asked for:
 | Sample interval (ms) | How often the sensor is physically read, in milliseconds. Default: 60000 (once a minute). |
 | Log/aggregate interval (ms) | How often a summary of the recent samples is written to SD/MQTT, in milliseconds. Must be **greater than or equal to** the sample interval. Default: 300000 (every 5 minutes). |
 | Aggregates | Which statistics to compute and report over each log interval — see [6.3](#63-understanding-sampling-vs-logging-vs-aggregation). |
-| Calibration multiplier (a) / offset (b) | Applied to every raw reading before logging/aggregation: `calibrated = a × raw + b`. Defaults (`a=1`, `b=0`) leave readings unchanged — see [6.6](#66-calibrating-a-variable-ax--b). |
+| Calibration multiplier (a) / offset (b) | Applied to every raw reading before logging/aggregation: `calibrated = a × raw + b`. Defaults (`a=1`, `b=0`) leave readings unchanged — see [6.6](#66-calibrating-a-variable-ax-b). |
 | Enabled | Untick to keep the configuration saved but pause this variable without deleting it. |
 
 ### 6.2 Finding your sensor's address

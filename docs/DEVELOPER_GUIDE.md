@@ -5,7 +5,7 @@ modifying, or extending the code. If you just want to *use* a device, see
 [USER_MANUAL.md](USER_MANUAL.md) instead.
 
 It assumes basic C familiarity but not prior ESP-IDF/embedded experience —
-unfamiliar terms are explained inline or in the [glossary](#20-glossary)
+unfamiliar terms are explained inline or in the [glossary](#21-glossary)
 at the end.
 
 ---
@@ -480,7 +480,7 @@ earlier assumption that HDC1080/LPS22HB lived there instead.
 `ads111x_read_channel()` uses a fixed configuration — PGA ±4.096V
 full-scale, single-shot mode, 128SPS (`ADS111X_CONVERSION_DELAY_MS = 10`
 padding above the ~7.8ms conversion time) — and returns a **voltage in
-volts** (`raw / 32768.0 * 4.096`). See [section 19.1](#191-adding-a-new-i2c-sensor-driver)
+volts** (`raw / 32768.0 * 4.096`). See [section 20.1](#201-adding-a-new-i2c-sensor-driver)
 for how to add another device type.
 
 ---
@@ -990,7 +990,7 @@ them in a real deployment:
    the external bus, and the board owner confirmed directly that every I2C
    device on this board (GPIO42/2/1) shares one bus - `onboard_i2c_bus`
    (GPIO12/11/13) only reaches a real but currently-unpopulated CO2 sensor
-   header. See [section 9.2](#92-i2c-i2c_bus--i2c_sensors).
+   header. See [section 9.2](#92-i2c-i2c_bus-i2c_sensors).
 7. **No OTA** — reflashing requires physical USB access.
 8. **MQTT batch buffer** (`MAX_BATCH_ITEMS = 256`) can overflow (drops
    silently, logged) if you combine many variables, short log intervals,

@@ -174,7 +174,7 @@ isn't a placeholder. If Preview shows a **negative** value, the shunt is
 seeing current flow in the direction opposite of what the firmware assumes;
 either physically swap the panel's leads, or set `a=-1` in the portal to
 flip the sign in software (see
-[USER_MANUAL.md §6.6](USER_MANUAL.md#66-calibrating-a-variable-ax--b)).
+[USER_MANUAL.md §6.6](USER_MANUAL.md#66-calibrating-a-variable-ax-b)).
 
 > **`WT_Current` is different: it needs `a ≈ 133.3`, not `a=1`.** The wind
 > turbine's shunt is rated 10 A at 75 mV, not 1 Ω, so 1 V measured is
