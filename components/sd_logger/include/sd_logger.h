@@ -48,6 +48,18 @@ esp_err_t sd_logger_get_space(uint64_t *out_total_bytes, uint64_t *out_free_byte
  * student can notice a flaky card. */
 uint32_t sd_logger_get_drop_count(void);
 
+/* Deep sleep support (power_manager): drains any queued sensor/position
+ * rows immediately and closes out any open wide-format group row,
+ * rather than waiting for the normal event-driven timing (a wide-format
+ * row only flushes once every group member has reported, or after
+ * log_interval_ms + a grace period) - called right before a deep sleep
+ * so nothing queued or sitting in an open row is lost. Blocks the
+ * calling task until the drain completes (or a generous internal
+ * timeout elapses) - safe to call from any task, not just
+ * sd_writer_task itself. A no-op that returns immediately if the SD
+ * card isn't mounted. */
+void sd_logger_flush_now(void);
+
 #ifdef __cplusplus
 }
 #endif

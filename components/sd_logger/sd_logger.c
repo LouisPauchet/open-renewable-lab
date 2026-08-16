@@ -14,6 +14,7 @@
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "esp_vfs_fat.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "sampling_engine.h"
 #include "sdmmc_cmd.h"
@@ -93,6 +94,15 @@ static QueueHandle_t s_position_queue;
 static sdmmc_card_t *s_card;
 static bool s_ready;
 static uint32_t s_drop_count;
+
+/* Deep-sleep flush handshake (see sd_logger_flush_now()): power_manager
+ * gives s_flush_request and blocks on s_flush_done; sd_writer_task polls
+ * s_flush_request each iteration and, if set, drains both queues fully
+ * and closes any open wide-format group row before giving s_flush_done
+ * back. */
+static SemaphoreHandle_t s_flush_request;
+static SemaphoreHandle_t s_flush_done;
+#define SD_FLUSH_TIMEOUT_MS 5000
 
 static void write_csv_string_field(FILE *f, const char *s)
 {
@@ -541,6 +551,17 @@ static void write_position_row(const position_row_t *p)
     fclose(f);
 }
 
+static void process_result(const aggregate_result_t *r)
+{
+    sd_settings_t sd_cfg;
+    config_store_get_sd_settings(&sd_cfg);
+    if (sd_cfg.log_format == SD_LOG_FORMAT_LONG) {
+        write_result_row(r);
+    } else {
+        handle_wide_result(r);
+    }
+}
+
 static void sd_writer_task(void *pvParams)
 {
     (void)pvParams;
@@ -549,18 +570,33 @@ static void sd_writer_task(void *pvParams)
     position_row_t position;
     for (;;) {
         esp_task_wdt_reset();
-        if (xQueueReceive(s_queue, &result, pdMS_TO_TICKS(5000)) == pdTRUE) {
-            sd_settings_t sd_cfg;
-            config_store_get_sd_settings(&sd_cfg);
-            if (sd_cfg.log_format == SD_LOG_FORMAT_LONG) {
-                write_result_row(&result);
-            } else {
-                handle_wide_result(&result);
-            }
+        bool flush_requested = s_flush_request && xSemaphoreTake(s_flush_request, 0) == pdTRUE;
+        /* Don't block for up to 5s on an empty queue when a flush is
+         * pending - the whole point is to drain and report back promptly. */
+        TickType_t wait_ticks = flush_requested ? 0 : pdMS_TO_TICKS(5000);
+
+        if (xQueueReceive(s_queue, &result, wait_ticks) == pdTRUE) {
+            process_result(&result);
         }
         check_group_timeouts();
         while (xQueueReceive(s_position_queue, &position, 0) == pdTRUE) {
             write_position_row(&position);
+        }
+
+        if (flush_requested) {
+            /* Catch anything still queued beyond the single item (if any)
+             * already handled above, then close out any open wide-format
+             * row rather than waiting for it to fill or time out. */
+            while (xQueueReceive(s_queue, &result, 0) == pdTRUE) {
+                process_result(&result);
+            }
+            while (xQueueReceive(s_position_queue, &position, 0) == pdTRUE) {
+                write_position_row(&position);
+            }
+            flush_all_groups();
+            if (s_flush_done) {
+                xSemaphoreGive(s_flush_done);
+            }
         }
     }
 }
@@ -639,6 +675,13 @@ esp_err_t sd_logger_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    s_flush_request = xSemaphoreCreateBinary();
+    s_flush_done = xSemaphoreCreateBinary();
+    if (!s_flush_request || !s_flush_done) {
+        esp_vfs_fat_sdcard_unmount(SD_LOGGER_MOUNT_POINT, s_card);
+        return ESP_ERR_NO_MEM;
+    }
+
     /* 6144, not the original 4096: the wide-format code path (see
      * section 11.1 in DEVELOPER_GUIDE.md) does substantially more
      * fprintf() work per row than the original long-format writer -
@@ -703,4 +746,13 @@ esp_err_t sd_logger_get_space(uint64_t *out_total_bytes, uint64_t *out_free_byte
 uint32_t sd_logger_get_drop_count(void)
 {
     return s_drop_count;
+}
+
+void sd_logger_flush_now(void)
+{
+    if (!s_ready || !s_flush_request || !s_flush_done) {
+        return;
+    }
+    xSemaphoreGive(s_flush_request);
+    xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(SD_FLUSH_TIMEOUT_MS));
 }
