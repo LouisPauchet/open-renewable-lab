@@ -37,6 +37,20 @@ static int64_t s_next_reconnect_attempt_us; /* non-batch mode only - see mqtt_pu
 static aggregate_result_t s_batch_buffer[MAX_BATCH_ITEMS];
 static size_t s_batch_count;
 static int64_t s_next_batch_transmit_us;
+/* Guards s_next_batch_transmit_us: written by mqtt_publish_task, also
+ * read by mqttc_get_sleep_status() which may be called from
+ * power_manager's own task. */
+static SemaphoreHandle_t s_batch_timing_mutex;
+
+/* Deep-sleep flush handshake (see mqttc_flush_now()): power_manager
+ * gives s_flush_request and blocks on s_flush_done; mqtt_publish_task
+ * polls s_flush_request each iteration, forces an immediate batch
+ * transmit attempt if in batch mode, and always gives s_flush_done back
+ * once that iteration is done (whether or not anything was actually
+ * sent - a no-op iteration still counts as "the request was handled"). */
+static SemaphoreHandle_t s_flush_request;
+static SemaphoreHandle_t s_flush_done;
+#define FLUSH_TIMEOUT_MS 20000 /* generous - a batch connect can legitimately take up to ~10s over cellular */
 
 static SemaphoreHandle_t s_position_mutex;
 typedef struct {
@@ -406,6 +420,7 @@ static void mqtt_publish_task(void *pvParams)
     for (;;) {
         aggregate_result_t result;
         bool got_sample = xQueueReceive(queue, &result, pdMS_TO_TICKS(500)) == pdTRUE;
+        bool flush_requested = s_flush_request && xSemaphoreTake(s_flush_request, 0) == pdTRUE;
 
         uint32_t generation = config_store_get_generation();
         if (generation != last_generation) {
@@ -415,7 +430,9 @@ static void mqtt_publish_task(void *pvParams)
             uint32_t old_interval_ms = s_current_settings.batch_interval_ms;
             apply_settings_if_changed(&cur);
             if (cur.batch_enabled && (!batch_was_enabled || cur.batch_interval_ms != old_interval_ms)) {
+                xSemaphoreTake(s_batch_timing_mutex, portMAX_DELAY);
                 s_next_batch_transmit_us = esp_timer_get_time(); /* send the first batch promptly */
+                xSemaphoreGive(s_batch_timing_mutex);
             }
             last_generation = generation;
         }
@@ -446,6 +463,14 @@ static void mqtt_publish_task(void *pvParams)
             }
             maybe_publish_pending_position();
             maybe_publish_pending_battery();
+            /* Non-batch mode has nothing buffered to flush (each result is
+             * published immediately above) and blocks deep sleep outright
+             * anyway (see mqttc_get_sleep_status()) - just acknowledge the
+             * request so a caller blocked in mqttc_flush_now() never hangs
+             * on a request that was never going to do anything. */
+            if (flush_requested && s_flush_done) {
+                xSemaphoreGive(s_flush_done);
+            }
             continue;
         }
 
@@ -459,8 +484,17 @@ static void mqtt_publish_task(void *pvParams)
         }
 
         int64_t now_us = esp_timer_get_time();
-        if (s_backend && s_current_settings.enabled && now_us >= s_next_batch_transmit_us &&
-            !cellular_transport_gnss_busy()) {
+        if (flush_requested) {
+            xSemaphoreTake(s_batch_timing_mutex, portMAX_DELAY);
+            s_next_batch_transmit_us = now_us; /* force this iteration's check below to fire */
+            xSemaphoreGive(s_batch_timing_mutex);
+        }
+
+        xSemaphoreTake(s_batch_timing_mutex, portMAX_DELAY);
+        bool transmit_due = now_us >= s_next_batch_transmit_us;
+        xSemaphoreGive(s_batch_timing_mutex);
+
+        if (s_backend && s_current_settings.enabled && transmit_due && !cellular_transport_gnss_busy()) {
             if (!s_backend_connected) {
                 if (s_backend->init(&s_current_settings) == ESP_OK && s_backend->connect() == ESP_OK) {
                     s_backend_connected = s_backend->is_connected();
@@ -496,7 +530,9 @@ static void mqtt_publish_task(void *pvParams)
 
                 s_backend->disconnect();
                 s_backend_connected = false;
+                xSemaphoreTake(s_batch_timing_mutex, portMAX_DELAY);
                 s_next_batch_transmit_us = now_us + (int64_t)s_current_settings.batch_interval_ms * 1000;
+                xSemaphoreGive(s_batch_timing_mutex);
                 ESP_LOGI(TAG, "batch transmit complete, next in %" PRIu32 " ms", s_current_settings.batch_interval_ms);
             } else {
                 ESP_LOGW(TAG, "batch transmit: failed to connect, will retry shortly");
@@ -504,6 +540,10 @@ static void mqtt_publish_task(void *pvParams)
                  * rate-limited by the 500ms queue-receive timeout, so
                  * no separate backoff needed. */
             }
+        }
+
+        if (flush_requested && s_flush_done) {
+            xSemaphoreGive(s_flush_done);
         }
     }
 }
@@ -537,6 +577,15 @@ esp_err_t mqttc_init(void)
     }
     s_battery_mutex = xSemaphoreCreateMutex();
     if (!s_battery_mutex) {
+        return ESP_ERR_NO_MEM;
+    }
+    s_batch_timing_mutex = xSemaphoreCreateMutex();
+    if (!s_batch_timing_mutex) {
+        return ESP_ERR_NO_MEM;
+    }
+    s_flush_request = xSemaphoreCreateBinary();
+    s_flush_done = xSemaphoreCreateBinary();
+    if (!s_flush_request || !s_flush_done) {
         return ESP_ERR_NO_MEM;
     }
 
@@ -596,4 +645,70 @@ esp_err_t mqttc_publish_battery(double voltage)
     s_pending_battery_valid = true;
     xSemaphoreGive(s_battery_mutex);
     return ESP_OK; /* actual publish happens from mqtt_publish_task */
+}
+
+/* ---------------------------------------------------------------------
+ * deep sleep support (power_manager)
+ * ------------------------------------------------------------------- */
+
+mqttc_sleep_status_t mqttc_get_sleep_status(void)
+{
+    mqttc_sleep_status_t status = { 0 };
+
+    mqtt_settings_t cur;
+    config_store_get_mqtt_settings(&cur);
+    if (!cur.enabled) {
+        return status; /* has_schedulable=false: MQTT is off, nothing to wait on */
+    }
+
+    if (!cur.batch_enabled) {
+        status.blocked = true;
+        snprintf(status.blocked_reason, sizeof(status.blocked_reason), "MQTT (non-batch)");
+        return status;
+    }
+
+    status.has_schedulable = true;
+
+    int64_t now_unix = time(NULL);
+    bool synced = now_unix >= TIME_SYNC_EPOCH_THRESHOLD;
+    if (!synced || !s_batch_timing_mutex) {
+        return status; /* next_due_is_synced stays false - no usable wall-clock bound yet */
+    }
+
+    xSemaphoreTake(s_batch_timing_mutex, portMAX_DELAY);
+    int64_t next_due_us = s_next_batch_transmit_us;
+    xSemaphoreGive(s_batch_timing_mutex);
+
+    status.next_due_is_synced = true;
+    status.next_due_unix = now_unix + (next_due_us - esp_timer_get_time()) / 1000000LL;
+    return status;
+}
+
+bool mqttc_has_pending_data(void)
+{
+    if (s_batch_count > 0) {
+        return true;
+    }
+
+    bool pending = false;
+    if (s_position_mutex) {
+        xSemaphoreTake(s_position_mutex, portMAX_DELAY);
+        pending = s_pending_position_valid;
+        xSemaphoreGive(s_position_mutex);
+    }
+    if (!pending && s_battery_mutex) {
+        xSemaphoreTake(s_battery_mutex, portMAX_DELAY);
+        pending = s_pending_battery_valid;
+        xSemaphoreGive(s_battery_mutex);
+    }
+    return pending;
+}
+
+void mqttc_flush_now(void)
+{
+    if (!s_flush_request || !s_flush_done) {
+        return;
+    }
+    xSemaphoreGive(s_flush_request);
+    xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(FLUSH_TIMEOUT_MS));
 }
