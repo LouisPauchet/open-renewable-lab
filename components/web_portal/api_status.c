@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include "mqtt_client_bridge.h"
 #include "net_manager.h"
+#include "power_manager.h"
 #include "sd_logger.h"
 #include "time_sync.h"
 #include "web_portal_internal.h"
@@ -86,6 +87,13 @@ static esp_err_t status_handler(httpd_req_t *req)
 
     cJSON_AddNumberToObject(o, "variable_count", cfg.variable_count);
     cJSON_AddNumberToObject(o, "config_generation", cfg.generation);
+
+    power_manager_status_t pwr = power_manager_get_status();
+    cJSON_AddBoolToObject(o, "sleep_enabled", pwr.sleep_enabled);
+    cJSON_AddBoolToObject(o, "sleep_blocked", pwr.blocked);
+    cJSON_AddStringToObject(o, "sleep_blocked_reason", pwr.blocked_reason);
+    cJSON_AddBoolToObject(o, "stay_awake_active", pwr.stay_awake_active);
+    cJSON_AddNumberToObject(o, "stay_awake_until_unix", (double)pwr.stay_awake_until_unix);
 
     return wp_send_json(req, o);
 }

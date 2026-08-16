@@ -3,6 +3,6 @@ idf_component_register(
          "dns_hijack.c"
     INCLUDE_DIRS "include"
     EMBED_FILES "assets/index.html"
-    REQUIRES esp_http_server config_store sampling_engine sd_logger net_manager time_sync mqtt_client sdi12_bus
-              i2c_bus cellular_transport device_id espressif__cjson esp_timer lwip esp_hw_support
+    REQUIRES esp_http_server config_store sampling_engine sd_logger net_manager power_manager time_sync mqtt_client
+              sdi12_bus i2c_bus cellular_transport device_id espressif__cjson esp_timer lwip esp_hw_support
 )

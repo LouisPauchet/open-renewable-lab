@@ -3,6 +3,7 @@
 #include "config_store.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "power_manager.h"
 #include "web_portal_internal.h"
 
 static void json_str(const cJSON *obj, const char *key, char *dst, size_t dst_size, const char *def)
@@ -207,6 +208,7 @@ static esp_err_t position_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(o, "sample_interval_ms", p.sample_interval_ms);
     cJSON_AddNumberToObject(o, "log_interval_ms", p.log_interval_ms);
     cJSON_AddNumberToObject(o, "aggregate_mask", p.aggregate_mask);
+    cJSON_AddBoolToObject(o, "allow_skip_during_sleep", p.allow_skip_during_sleep);
     cJSON_AddBoolToObject(o, "available", n.transport == TRANSPORT_CELLULAR);
     return wp_send_json(req, o);
 }
@@ -230,6 +232,7 @@ static esp_err_t position_put_handler(httpd_req_t *req)
     p.sample_interval_ms = (uint32_t)json_int(body, "sample_interval_ms", (int)current.sample_interval_ms);
     p.log_interval_ms = (uint32_t)json_int(body, "log_interval_ms", (int)current.log_interval_ms);
     p.aggregate_mask = (uint8_t)json_int(body, "aggregate_mask", current.aggregate_mask) & AGG_ALL_VALID_BITS;
+    p.allow_skip_during_sleep = json_bool(body, "allow_skip_during_sleep", current.allow_skip_during_sleep);
     cJSON_Delete(body);
 
     if (p.enabled && p.sample_interval_ms == 0) {
@@ -267,6 +270,7 @@ static esp_err_t battery_get_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(o, "enabled", b.enabled);
     cJSON_AddNumberToObject(o, "interval_ms", b.interval_ms);
     cJSON_AddBoolToObject(o, "sync_with_mqtt", b.sync_with_mqtt);
+    cJSON_AddBoolToObject(o, "allow_skip_during_sleep", b.allow_skip_during_sleep);
     return wp_send_json(req, o);
 }
 
@@ -290,6 +294,7 @@ static esp_err_t battery_put_handler(httpd_req_t *req)
     b.enabled = json_bool(body, "enabled", current.enabled);
     b.interval_ms = (uint32_t)json_int(body, "interval_ms", (int)current.interval_ms);
     b.sync_with_mqtt = json_bool(body, "sync_with_mqtt", current.sync_with_mqtt);
+    b.allow_skip_during_sleep = json_bool(body, "allow_skip_during_sleep", current.allow_skip_during_sleep);
     cJSON_Delete(body);
 
     if (b.cell_count == 0) {
@@ -347,6 +352,84 @@ static esp_err_t sd_put_handler(httpd_req_t *req)
     }
 
     config_store_set_sd_settings(&s);
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddBoolToObject(resp, "ok", true);
+    return wp_send_json(req, resp);
+}
+
+/* ---- Power management (deep sleep) settings ---- */
+
+static esp_err_t power_get_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    power_settings_t p;
+    config_store_get_power_settings(&p);
+    power_manager_status_t status = power_manager_get_status();
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "enabled", p.enabled);
+    cJSON_AddNumberToObject(o, "min_sleep_duration_ms", p.min_sleep_duration_ms);
+    cJSON_AddBoolToObject(o, "blocked", status.blocked);
+    cJSON_AddStringToObject(o, "blocked_reason", status.blocked_reason);
+    cJSON_AddBoolToObject(o, "stay_awake_active", status.stay_awake_active);
+    cJSON_AddNumberToObject(o, "stay_awake_until_unix", (double)status.stay_awake_until_unix);
+    return wp_send_json(req, o);
+}
+
+static esp_err_t power_put_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    cJSON *body;
+    if (wp_read_json_body(req, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+
+    power_settings_t current;
+    config_store_get_power_settings(&current);
+
+    power_settings_t p = current;
+    p.enabled = json_bool(body, "enabled", current.enabled);
+    p.min_sleep_duration_ms = (uint32_t)json_int(body, "min_sleep_duration_ms", (int)current.min_sleep_duration_ms);
+    cJSON_Delete(body);
+
+    if (p.enabled && p.min_sleep_duration_ms == 0) {
+        return wp_send_error(req, "400 Bad Request", "min_sleep_duration_ms must be > 0 when enabled");
+    }
+
+    config_store_set_power_settings(&p);
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddBoolToObject(resp, "ok", true);
+    return wp_send_json(req, resp);
+}
+
+/* ---- Stay-awake override ---- */
+
+static esp_err_t stay_awake_handler(httpd_req_t *req)
+{
+    if (!wp_auth_require(req)) {
+        return ESP_OK;
+    }
+
+    cJSON *body;
+    if (wp_read_json_body(req, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+
+    int minutes = json_int(body, "minutes", 30);
+    cJSON_Delete(body);
+
+    if (minutes < 0) {
+        return wp_send_error(req, "400 Bad Request", "minutes must be >= 0 (0 cancels an active window)");
+    }
+
+    power_manager_request_stay_awake((uint32_t)minutes);
+
     cJSON *resp = cJSON_CreateObject();
     cJSON_AddBoolToObject(resp, "ok", true);
     return wp_send_json(req, resp);
@@ -545,6 +628,14 @@ void api_settings_register_routes(httpd_handle_t server)
     u = (httpd_uri_t){ .uri = "/api/settings/sd", .method = HTTP_GET, .handler = sd_get_handler };
     httpd_register_uri_handler(server, &u);
     u = (httpd_uri_t){ .uri = "/api/settings/sd", .method = HTTP_PUT, .handler = sd_put_handler };
+    httpd_register_uri_handler(server, &u);
+
+    u = (httpd_uri_t){ .uri = "/api/settings/power", .method = HTTP_GET, .handler = power_get_handler };
+    httpd_register_uri_handler(server, &u);
+    u = (httpd_uri_t){ .uri = "/api/settings/power", .method = HTTP_PUT, .handler = power_put_handler };
+    httpd_register_uri_handler(server, &u);
+
+    u = (httpd_uri_t){ .uri = "/api/power/stay-awake", .method = HTTP_POST, .handler = stay_awake_handler };
     httpd_register_uri_handler(server, &u);
 
     u = (httpd_uri_t){ .uri = "/api/settings/password", .method = HTTP_PUT, .handler = password_put_handler };
