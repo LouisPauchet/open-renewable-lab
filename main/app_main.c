@@ -19,6 +19,7 @@
 #include "mqtt_client_bridge.h"
 #include "net_manager.h"
 #include "onboard_i2c_bus.h"
+#include "power_manager.h"
 #include "sampling_engine.h"
 #include "sd_logger.h"
 #include "sdi12_bus.h"
@@ -97,6 +98,12 @@ void app_main(void)
     ESP_LOGI(TAG, "config loaded: %u variable(s), generation=%" PRIu32,
              (unsigned)cfg.variable_count, cfg.generation);
 
+    /* Must run before sampling_engine_init()/battery_monitor_init() below
+     * (and gnss_position_init() further down) - hands each of them their
+     * RTC-persisted state back on a sleep-wake boot before they build
+     * their own fresh state from scratch. See power_manager.h. */
+    ESP_ERROR_CHECK(power_manager_init());
+
     if (sdi12_bus_init() == ESP_OK) {
         sampling_engine_register_bus_driver(BUS_TYPE_SDI12, sdi12_variable_read);
     } else {
@@ -130,7 +137,7 @@ void app_main(void)
         ESP_LOGW(TAG, "SD logging unavailable (no card, or board_pins.h SD pins not yet configured)");
     }
 
-    ESP_ERROR_CHECK(net_manager_init(false));
+    ESP_ERROR_CHECK(net_manager_init(power_manager_is_sleep_wake()));
     ESP_ERROR_CHECK(web_portal_init());
     ESP_ERROR_CHECK(time_sync_init());
 
