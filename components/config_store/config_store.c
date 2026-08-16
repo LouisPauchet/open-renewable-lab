@@ -189,6 +189,9 @@ static void config_set_defaults(device_config_t *c)
 
     c->sd.log_format = SD_LOG_FORMAT_LONG;
 
+    c->power.enabled = false; /* opt-in; see power_settings_t's own comment */
+    c->power.min_sleep_duration_ms = 60 * 1000; /* 1 min - shorter gaps aren't worth a reboot+reconnect cycle */
+
     c->variable_count = 0;
     add_default_onboard_env_variable(c, 1, "Board_Temperature", "degC", DEFAULT_ONBOARD_HDC1080_I2C_ADDR,
                                       DEFAULT_ONBOARD_HDC1080_TEMP_DEVICE_TYPE);
@@ -240,6 +243,7 @@ cJSON *config_store_variable_to_json(const variable_config_t *v)
     cJSON_AddNumberToObject(o, "calibration_a", v->calibration_a);
     cJSON_AddNumberToObject(o, "calibration_b", v->calibration_b);
     cJSON_AddBoolToObject(o, "enabled", v->enabled);
+    cJSON_AddBoolToObject(o, "allow_skip_during_sleep", v->allow_skip_during_sleep);
     return o;
 }
 
@@ -271,6 +275,7 @@ bool config_store_variable_from_json(const cJSON *o, variable_config_t *v)
     v->calibration_a = json_get_double(o, "calibration_a", 1.0);
     v->calibration_b = json_get_double(o, "calibration_b", 0.0);
     v->enabled = json_get_bool(o, "enabled", true);
+    v->allow_skip_during_sleep = json_get_bool(o, "allow_skip_during_sleep", false);
     return true;
 }
 
@@ -306,6 +311,7 @@ cJSON *config_store_to_json(const device_config_t *c)
     cJSON_AddNumberToObject(position, "sample_interval_ms", c->position.sample_interval_ms);
     cJSON_AddNumberToObject(position, "log_interval_ms", c->position.log_interval_ms);
     cJSON_AddNumberToObject(position, "aggregate_mask", c->position.aggregate_mask);
+    cJSON_AddBoolToObject(position, "allow_skip_during_sleep", c->position.allow_skip_during_sleep);
 
     cJSON *battery = cJSON_AddObjectToObject(root, "battery");
     cJSON_AddNumberToObject(battery, "chemistry", c->battery.chemistry);
@@ -313,10 +319,15 @@ cJSON *config_store_to_json(const device_config_t *c)
     cJSON_AddBoolToObject(battery, "enabled", c->battery.enabled);
     cJSON_AddNumberToObject(battery, "interval_ms", c->battery.interval_ms);
     cJSON_AddBoolToObject(battery, "sync_with_mqtt", c->battery.sync_with_mqtt);
+    cJSON_AddBoolToObject(battery, "allow_skip_during_sleep", c->battery.allow_skip_during_sleep);
 
     cJSON *sd = cJSON_AddObjectToObject(root, "sd");
     cJSON_AddNumberToObject(sd, "log_format", c->sd.log_format);
     cJSON_AddStringToObject(sd, "station_name", c->sd.station_name);
+
+    cJSON *power = cJSON_AddObjectToObject(root, "power");
+    cJSON_AddBoolToObject(power, "enabled", c->power.enabled);
+    cJSON_AddNumberToObject(power, "min_sleep_duration_ms", c->power.min_sleep_duration_ms);
 
     cJSON *vars = cJSON_AddArrayToObject(root, "variables");
     for (uint8_t i = 0; i < c->variable_count; i++) {
@@ -369,6 +380,8 @@ bool config_store_from_json(const cJSON *root, device_config_t *c)
             (uint32_t)json_get_int(position, "log_interval_ms", (int)c->position.log_interval_ms);
         c->position.aggregate_mask =
             (uint8_t)json_get_int(position, "aggregate_mask", c->position.aggregate_mask) & AGG_ALL_VALID_BITS;
+        c->position.allow_skip_during_sleep =
+            json_get_bool(position, "allow_skip_during_sleep", c->position.allow_skip_during_sleep);
     }
 
     const cJSON *battery = cJSON_GetObjectItemCaseSensitive(root, "battery");
@@ -378,12 +391,21 @@ bool config_store_from_json(const cJSON *root, device_config_t *c)
         c->battery.enabled = json_get_bool(battery, "enabled", c->battery.enabled);
         c->battery.interval_ms = (uint32_t)json_get_int(battery, "interval_ms", (int)c->battery.interval_ms);
         c->battery.sync_with_mqtt = json_get_bool(battery, "sync_with_mqtt", c->battery.sync_with_mqtt);
+        c->battery.allow_skip_during_sleep =
+            json_get_bool(battery, "allow_skip_during_sleep", c->battery.allow_skip_during_sleep);
     }
 
     const cJSON *sd = cJSON_GetObjectItemCaseSensitive(root, "sd");
     if (sd) {
         c->sd.log_format = (sd_log_format_t)json_get_int(sd, "log_format", c->sd.log_format);
         json_get_str(sd, "station_name", c->sd.station_name, sizeof(c->sd.station_name), c->sd.station_name);
+    }
+
+    const cJSON *power = cJSON_GetObjectItemCaseSensitive(root, "power");
+    if (power) {
+        c->power.enabled = json_get_bool(power, "enabled", c->power.enabled);
+        c->power.min_sleep_duration_ms =
+            (uint32_t)json_get_int(power, "min_sleep_duration_ms", (int)c->power.min_sleep_duration_ms);
     }
 
     const cJSON *vars = cJSON_GetObjectItemCaseSensitive(root, "variables");
@@ -800,6 +822,26 @@ esp_err_t config_store_set_sd_settings(const sd_settings_t *settings)
     }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_config.sd = *settings;
+    s_config.generation++;
+    esp_err_t err = save_locked();
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
+void config_store_get_power_settings(power_settings_t *out)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    *out = s_config.power;
+    xSemaphoreGive(s_mutex);
+}
+
+esp_err_t config_store_set_power_settings(const power_settings_t *settings)
+{
+    if (!settings) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_config.power = *settings;
     s_config.generation++;
     esp_err_t err = save_locked();
     xSemaphoreGive(s_mutex);

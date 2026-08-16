@@ -64,6 +64,21 @@ typedef struct {
     double calibration_b;
 
     bool enabled;
+
+    /* Only meaningful when power.deep_sleep_enabled - see
+     * power_settings_t below. A variable that samples faster than it
+     * logs (sample_interval_ms < log_interval_ms, i.e. it needs several
+     * samples folded into one aggregate) blocks deep sleep entirely by
+     * default, since sleeping through even one sample_interval_ms would
+     * silently degrade its data. Setting this true is an explicit,
+     * informed opt-in to that degradation: the device may deep-sleep
+     * through some of this variable's sample_interval_ms windows, so
+     * its aggregate ends up folding fewer samples than configured
+     * whenever a sleep happens to land mid-window - see
+     * power_manager.c. Irrelevant (never blocks anything) for a
+     * variable whose sample_interval_ms == log_interval_ms, since that
+     * case has nothing to skip in the first place. */
+    bool allow_skip_during_sleep;
 } variable_config_t;
 
 typedef enum {
@@ -126,6 +141,10 @@ typedef struct {
     uint32_t sample_interval_ms; /* how often to attempt a GPS fix */
     uint32_t log_interval_ms;    /* how often the fixes since the last log are aggregated and logged/published; must be >= sample_interval_ms */
     uint8_t aggregate_mask;      /* bitwise OR of aggregate_mask_t, applied independently to each of the four fields above */
+
+    /* Same meaning and default (false) as variable_config_t's own field
+     * of the same name - see its comment. */
+    bool allow_skip_during_sleep;
 } position_settings_t;
 
 typedef enum {
@@ -163,6 +182,16 @@ typedef struct {
      * internally so the reading handed to each publish is fresh - see
      * battery_monitor.c. */
     bool sync_with_mqtt;
+
+    /* Only meaningful when power.deep_sleep_enabled. Unlike a variable
+     * or position, there's no sample/log split here to silently
+     * degrade - this just controls whether interval_ms (or
+     * sync_with_mqtt's fixed short poll) is allowed to bound/block deep
+     * sleep. Default (false): battery polling's own cadence is treated
+     * as mandatory, same as any simple variable. True: the device may
+     * deep-sleep through some polls, so the reported voltage may be
+     * staler than interval_ms suggests. */
+    bool allow_skip_during_sleep;
 } battery_settings_t;
 
 typedef enum {
@@ -203,6 +232,19 @@ typedef struct {
 } sd_settings_t;
 
 typedef struct {
+    /* Master opt-in - off by default. While false, power_manager takes
+     * no action at all: no RTC state is written, esp_deep_sleep_start()
+     * is never called, every other component behaves exactly as it did
+     * before this feature existed. See power_manager.c/.h. */
+    bool enabled;
+
+    /* Deep sleep has real overhead (reboot + re-init + a fresh network
+     * reconnect on wake) - not worth paying for a gap shorter than
+     * this, even if every schedule would technically allow it. */
+    uint32_t min_sleep_duration_ms;
+} power_settings_t;
+
+typedef struct {
     uint32_t schema_version;
 
     /* combined "<16-char salt hex><64-char sha256 hex>" + NUL */
@@ -213,6 +255,7 @@ typedef struct {
     position_settings_t position;
     battery_settings_t battery;
     sd_settings_t sd;
+    power_settings_t power;
 
     variable_config_t variables[MAX_VARIABLES];
     uint8_t variable_count;
