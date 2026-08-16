@@ -16,8 +16,12 @@ throughout the steps that follow.
 9 - GNSS Antenna TAOGLAS FXP-611 https://www.gotronic.fr/art-antenne-cloud-gnss-fxp611-39917.htm
 10 - A pokawoke to drill in the box (available in AGF dept if you are at UNIS)
 
-*(A numbered component photo matching the list above still needs to be
-added here.)*
+<figure markdown>
+![Componnent List](pictures/Logger_Hardware_01_Componnents.jpeg)
+<figcaption>
+Componnent List
+</figcaption>
+</figure>
 
 You'll also need a soldering iron, heat shrink tubing (+ a lighter or hot
 air gun to shrink it), wire strippers, and a screwdriver.
