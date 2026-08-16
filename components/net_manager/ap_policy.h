@@ -19,7 +19,12 @@ typedef enum {
 
 typedef void (*ap_policy_state_change_cb_t)(ap_state_t old_state, ap_state_t new_state);
 
-esp_err_t ap_policy_init(void);
+/* suppress_boot_grace: true on a power_manager-initiated sleep-wake boot
+ * (see power_manager_is_sleep_wake()) - starts directly in AP_STATE_OFF
+ * instead of AP_STATE_BOOT_GRACE, so a device that deep-sleeps and wakes
+ * briefly to take a reading doesn't force its AP/portal on every single
+ * time. Normal boots (false) behave exactly as before. */
+esp_err_t ap_policy_init(bool suppress_boot_grace);
 void ap_policy_set_callback(ap_policy_state_change_cb_t cb);
 void ap_policy_force_on(void);
 ap_state_t ap_policy_get_state(void);

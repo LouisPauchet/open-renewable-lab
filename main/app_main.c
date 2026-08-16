@@ -130,7 +130,7 @@ void app_main(void)
         ESP_LOGW(TAG, "SD logging unavailable (no card, or board_pins.h SD pins not yet configured)");
     }
 
-    ESP_ERROR_CHECK(net_manager_init());
+    ESP_ERROR_CHECK(net_manager_init(false));
     ESP_ERROR_CHECK(web_portal_init());
     ESP_ERROR_CHECK(time_sync_init());
 

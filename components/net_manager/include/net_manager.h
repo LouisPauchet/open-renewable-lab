@@ -15,8 +15,16 @@ extern "C" {
  * least one client is associated, otherwise turns off. This is
  * independent of the data-plane transport (WiFi STA / cellular) - full
  * STA connection handling is added on top of this in a later build
- * stage; for now the radio only ever runs in AP or NULL mode. */
-esp_err_t net_manager_init(void);
+ * stage; for now the radio only ever runs in AP, STA, APSTA, or NULL
+ * mode.
+ *
+ * suppress_ap_boot_grace: pass power_manager_is_sleep_wake() (false if
+ * power_manager isn't in use, or always pass false if deep sleep is
+ * never enabled) - true skips the normal forced-AP boot grace window,
+ * since a device briefly waking from a power_manager-initiated deep
+ * sleep to take a reading shouldn't force its portal on every time. See
+ * ap_policy_init(). */
+esp_err_t net_manager_init(bool suppress_ap_boot_grace);
 
 /* Extension point for a future physical "force setup mode" button -
  * immediately (re)enters the boot-grace-equivalent forced-on state. */

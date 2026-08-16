@@ -56,23 +56,30 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     }
 }
 
-esp_err_t ap_policy_init(void)
+esp_err_t ap_policy_init(bool suppress_boot_grace)
 {
-    s_state = AP_STATE_BOOT_GRACE;
-    s_grace_active = true;
     s_client_count = 0;
-
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, wifi_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, wifi_event_handler, NULL));
 
     const esp_timer_create_args_t targs = {
         .callback = grace_timer_cb,
         .name = "ap_boot_grace",
     };
     ESP_ERROR_CHECK(esp_timer_create(&targs, &s_grace_timer));
-    ESP_ERROR_CHECK(esp_timer_start_once(s_grace_timer, (uint64_t)AP_BOOT_GRACE_MS * 1000));
 
-    ESP_LOGI(TAG, "boot grace window started (%d ms)", AP_BOOT_GRACE_MS);
+    if (suppress_boot_grace) {
+        s_state = AP_STATE_OFF;
+        s_grace_active = false;
+        ESP_LOGI(TAG, "boot grace window suppressed (sleep-wake boot)");
+    } else {
+        s_state = AP_STATE_BOOT_GRACE;
+        s_grace_active = true;
+        ESP_ERROR_CHECK(esp_timer_start_once(s_grace_timer, (uint64_t)AP_BOOT_GRACE_MS * 1000));
+        ESP_LOGI(TAG, "boot grace window started (%d ms)", AP_BOOT_GRACE_MS);
+    }
+
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, wifi_event_handler, NULL));
+
     return ESP_OK;
 }
 

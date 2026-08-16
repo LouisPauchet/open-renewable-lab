@@ -127,7 +127,7 @@ static void sta_event_handler(void *arg, esp_event_base_t base, int32_t id, void
     }
 }
 
-esp_err_t net_manager_init(void)
+esp_err_t net_manager_init(bool suppress_ap_boot_grace)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -148,8 +148,12 @@ esp_err_t net_manager_init(void)
     config_store_get_net_settings(&net);
     bool sta_wanted = (net.transport == TRANSPORT_WIFI);
 
-    /* Boot always starts in the AP boot-grace window (AP forced on). */
-    ESP_ERROR_CHECK(esp_wifi_set_mode(sta_wanted ? WIFI_MODE_APSTA : WIFI_MODE_AP));
+    /* esp_wifi_set_config() requires its target interface to be enabled
+     * in the current mode, so configure both AP and STA while in APSTA
+     * mode regardless of what's actually wanted at boot - simpler than
+     * conditionally ordering set_mode/set_config against each other
+     * below. */
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
 
     uint8_t mac[6];
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_AP, mac));
@@ -174,24 +178,46 @@ esp_err_t net_manager_init(void)
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
     }
 
-    ESP_ERROR_CHECK(esp_wifi_start());
-    s_wifi_started = true;
+    /* A normal boot always starts in the AP boot-grace window (AP forced
+     * on). A power_manager sleep-wake boot (suppress_ap_boot_grace)
+     * skips that - the portal doesn't need to be reachable on every
+     * brief wake, only on a genuine boot or an explicit stay-awake
+     * request (see power_manager_request_stay_awake()) - so it starts
+     * with only whatever the data-plane transport itself needs. */
+    bool ap_wanted_at_boot = !suppress_ap_boot_grace;
+    wifi_mode_t initial_mode = ap_wanted_at_boot ? (sta_wanted ? WIFI_MODE_APSTA : WIFI_MODE_AP)
+                                                  : (sta_wanted ? WIFI_MODE_STA : WIFI_MODE_NULL);
+    if (initial_mode != WIFI_MODE_APSTA) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(initial_mode));
+    }
 
-    /* Modem power-save: let the radio doze between beacon/DTIM
-     * intervals instead of staying fully powered all the time -
-     * cooperates with the system-wide automatic light sleep enabled in
-     * app_main.c. Mainly benefits STA mode (idle time between the
-     * broker/AP's beacons); the SoftAP side still has to keep beaconing
-     * on schedule regardless; harmless to set unconditionally.
-     * WIFI_PS_MIN_MODEM is also ESP-IDF's own default for STA, set
-     * explicitly here so the intent isn't silently dependent on that
-     * default staying unchanged. */
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
+    if (initial_mode != WIFI_MODE_NULL) {
+        ESP_ERROR_CHECK(esp_wifi_start());
+        s_wifi_started = true;
+
+        /* Modem power-save: let the radio doze between beacon/DTIM
+         * intervals instead of staying fully powered all the time -
+         * cooperates with the system-wide automatic light sleep enabled
+         * in app_main.c. Mainly benefits STA mode (idle time between the
+         * broker/AP's beacons); the SoftAP side still has to keep
+         * beaconing on schedule regardless; harmless to set
+         * unconditionally. WIFI_PS_MIN_MODEM is also ESP-IDF's own
+         * default for STA, set explicitly here so the intent isn't
+         * silently dependent on that default staying unchanged. */
+        ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
+    } else {
+        /* Nothing wants AP or STA right now (sleep-wake boot, no WiFi
+         * transport configured) - leave the radio stopped entirely
+         * rather than starting it in NULL mode; apply_wifi_mode() brings
+         * it up on demand the moment AP or STA is actually needed. */
+        s_wifi_started = false;
+    }
 
     ap_policy_set_callback(apply_wifi_mode_for_ap_state);
-    ESP_ERROR_CHECK(ap_policy_init());
+    ESP_ERROR_CHECK(ap_policy_init(suppress_ap_boot_grace));
 
-    ESP_LOGI(TAG, "SoftAP '%s' started (open network, portal login required)%s", ap_cfg.ap.ssid,
+    ESP_LOGI(TAG, "SoftAP '%s' %s (open network, portal login required)%s", ap_cfg.ap.ssid,
+             ap_wanted_at_boot ? "started" : "not started (sleep-wake boot)",
              sta_wanted ? "; connecting to configured WiFi STA" : "");
     return ESP_OK;
 }
