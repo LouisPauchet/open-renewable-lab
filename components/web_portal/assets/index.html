@@ -87,6 +87,10 @@
   <form id="sd-form"></form>
   <div class="msg" id="sd-msg"></div>
 
+  <h2>Power management</h2>
+  <form id="power-form"></form>
+  <div class="msg" id="power-msg"></div>
+
   <h2>Portal password</h2>
   <form id="password-form">
     <label>Current password <input type="password" id="pw-old" required></label>
@@ -220,6 +224,10 @@ async function refreshStatus() {
       ? (s.position_latitude.toFixed(5) + ", " + s.position_longitude.toFixed(5) + " (" + s.position_altitude_m.toFixed(0) + "m, ±" + s.position_h_precision_m.toFixed(0) + "m)")
       : "none yet"]);
   }
+  if (s.sleep_enabled) {
+    rows.push(["Deep sleep", s.sleep_blocked ? ("blocked (" + s.sleep_blocked_reason + ")") : "eligible when idle"]);
+    if (s.stay_awake_active) rows.push(["Stay-awake until", new Date(s.stay_awake_until_unix * 1000).toLocaleString()]);
+  }
   rows.push(["Variables", s.variable_count], ["Config generation", s.config_generation]);
   $("#status-grid").innerHTML = rows.map(r => `<div>${r[0]}</div><div>${r[1]}</div>`).join("");
 }
@@ -315,6 +323,10 @@ function variableFormFields(v) {
     </div>
     <small>Applied to every raw sample before logging/aggregation: calibrated = a &times; raw + b. Defaults (a=1, b=0) leave the reading unchanged - e.g. for a voltage divider with a 1/11 ratio, set a to 11.</small>
     <label><input type="checkbox" name="enabled" ${v.enabled ? "checked" : ""}> Enabled</label>
+    <label><input type="checkbox" name="allow_skip_during_sleep" ${v.allow_skip_during_sleep ? "checked" : ""}> Allow deep sleep to skip samples for this variable</label>
+    <small>Only matters if deep sleep is enabled below (Power management) and this variable's sample interval is
+      shorter than its log interval. Leave unchecked (default) to block deep sleep entirely rather than silently
+      losing samples; check it to accept fewer samples per aggregate whenever a sleep lands mid-interval.</small>
     <button type="submit">Save</button>
     <button type="button" id="cancel-variable-btn">Cancel</button>
   `;
@@ -341,6 +353,7 @@ function readVariableForm(form) {
     calibration_a: parseFloat(fd.get("calibration_a") || "1"),
     calibration_b: parseFloat(fd.get("calibration_b") || "0"),
     enabled: !!fd.get("enabled"),
+    allow_skip_during_sleep: !!fd.get("allow_skip_during_sleep"),
   };
 }
 function updateI2cModeVisibility(form) {
@@ -564,6 +577,8 @@ function positionFormFields(p) {
       ${AGG_BITS.map(([name, bit]) => `<label style="display:inline-block;width:auto;margin-right:.75rem">
         <input type="checkbox" name="agg_${name}" ${(p.aggregate_mask & bit) ? "checked" : ""} ${p.available ? "" : "disabled"}> ${name}</label>`).join("")}
     </label>
+    <label><input type="checkbox" name="allow_skip_during_sleep" ${p.allow_skip_during_sleep ? "checked" : ""} ${p.available ? "" : "disabled"}> Allow deep sleep to skip fixes when sample interval &lt; log interval</label>
+    <small>Same idea as a Variable's own "allow skip" checkbox - only matters if deep sleep is enabled below.</small>
     <button type="submit" ${p.available ? "" : "disabled"}>Save position settings</button>
   `;
 }
@@ -582,6 +597,7 @@ async function refreshPosition() {
       sample_interval_ms: parseInt(fd.get("sample_interval_ms"), 10),
       log_interval_ms: parseInt(fd.get("log_interval_ms"), 10),
       aggregate_mask: mask,
+      allow_skip_during_sleep: !!fd.get("allow_skip_during_sleep"),
     };
     try {
       await api("/api/settings/position", { method: "PUT", body });
@@ -611,6 +627,10 @@ function batteryFormFields(b) {
       Report alongside every MQTT publish instead of on its own schedule</label>
     <label>Publish interval (ms) - ignored if "report alongside" above is checked
       <input type="number" name="interval_ms" min="1000" value="${b.interval_ms}"></label>
+    <label><input type="checkbox" name="allow_skip_during_sleep" ${b.allow_skip_during_sleep ? "checked" : ""}> Allow deep sleep to skip battery polls</label>
+    <small>Only matters if deep sleep is enabled below. Unchecked (default): the poll interval above bounds sleep,
+      same as a Variable's schedule. Checked: the device may sleep through polls, so the reported voltage can be
+      staler than the interval suggests.</small>
     <button type="submit">Save battery settings</button>
   `;
 }
@@ -626,6 +646,7 @@ async function refreshBattery() {
       chemistry: parseInt(fd.get("chemistry"), 10), cell_count: parseInt(fd.get("cell_count"), 10),
       enabled: !!fd.get("enabled"), interval_ms: parseInt(fd.get("interval_ms"), 10),
       sync_with_mqtt: !!fd.get("sync_with_mqtt"),
+      allow_skip_during_sleep: !!fd.get("allow_skip_during_sleep"),
     };
     try {
       await api("/api/settings/battery", { method: "PUT", body });
@@ -669,6 +690,66 @@ async function refreshSd() {
       $("#sd-msg").textContent = "Save failed: " + err.message; $("#sd-msg").className = "msg err";
     }
   };
+}
+
+/* ---- Power management (deep sleep) ---- */
+function powerFormFields(p) {
+  return `
+    <small>When enabled, the device deep-sleeps whenever nothing configured needs attention for at least the
+      minimum sleep duration below - CPU, radios, and RAM all lose state; on wake it reboots and resumes in-flight
+      readings from what was saved before sleeping. A sample/log-interval mismatch on a Variable, Position, or
+      Battery setting blocks sleep unless that setting's own "allow skip during sleep" is checked.</small>
+    <label><input type="checkbox" name="enabled" ${p.enabled ? "checked" : ""}> Enable deep sleep</label>
+    <label>Minimum sleep duration (ms) - gaps shorter than this aren't worth the reboot/reconnect overhead
+      <input type="number" name="min_sleep_duration_ms" min="1" value="${p.min_sleep_duration_ms}"></label>
+    <button type="submit">Save power settings</button>
+    <div class="status-grid" style="margin-top:.75rem">
+      <div>Currently</div><div>${p.blocked ? ("blocked (" + p.blocked_reason + ")") : "eligible to sleep when idle"}</div>
+      <div>Stay-awake window</div><div>${p.stay_awake_active ? ("active until " + new Date(p.stay_awake_until_unix * 1000).toLocaleString()) : "none"}</div>
+    </div>
+    <label style="margin-top:.75rem">Stay-awake minutes <input type="number" id="stay-awake-minutes" min="1" value="30"></label>
+    <button type="button" id="stay-awake-btn">Stay awake</button>
+    <button type="button" id="stay-awake-cancel-btn">Cancel stay-awake</button>
+    <small>Forces the AP/portal on and holds off sleeping for the given window - the only way to reach a deployed,
+      sleeping device short of a full power-cycle, since this hardware has no physical force-setup button.</small>
+  `;
+}
+async function refreshPower() {
+  let p;
+  try { p = await api("/api/settings/power"); } catch { return; }
+  const form = $("#power-form");
+  form.innerHTML = powerFormFields(p);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const body = { enabled: !!fd.get("enabled"), min_sleep_duration_ms: parseInt(fd.get("min_sleep_duration_ms"), 10) };
+    try {
+      await api("/api/settings/power", { method: "PUT", body });
+      $("#power-msg").textContent = "Saved."; $("#power-msg").className = "msg ok";
+      await refreshPower();
+    } catch (err) {
+      $("#power-msg").textContent = "Save failed: " + err.message; $("#power-msg").className = "msg err";
+    }
+  };
+  $("#stay-awake-btn", form).addEventListener("click", async () => {
+    const minutes = parseInt($("#stay-awake-minutes", form).value, 10) || 30;
+    try {
+      await api("/api/power/stay-awake", { method: "POST", body: { minutes } });
+      $("#power-msg").textContent = "Stay-awake window started."; $("#power-msg").className = "msg ok";
+      await refreshPower();
+    } catch (err) {
+      $("#power-msg").textContent = "Failed: " + err.message; $("#power-msg").className = "msg err";
+    }
+  });
+  $("#stay-awake-cancel-btn", form).addEventListener("click", async () => {
+    try {
+      await api("/api/power/stay-awake", { method: "POST", body: { minutes: 0 } });
+      $("#power-msg").textContent = "Stay-awake window cancelled."; $("#power-msg").className = "msg ok";
+      await refreshPower();
+    } catch (err) {
+      $("#power-msg").textContent = "Failed: " + err.message; $("#power-msg").className = "msg err";
+    }
+  });
 }
 
 /* ---- password ---- */
@@ -731,7 +812,7 @@ $("#factory-reset-btn").addEventListener("click", async () => {
 });
 
 async function refreshAll() {
-  await Promise.all([refreshStatus(), refreshVariables(), refreshMqtt(), refreshNetwork(), refreshPosition(), refreshBattery(), refreshSd()]);
+  await Promise.all([refreshStatus(), refreshVariables(), refreshMqtt(), refreshNetwork(), refreshPosition(), refreshBattery(), refreshSd(), refreshPower()]);
 }
 setInterval(() => { if (!$("#app").classList.contains("hidden")) refreshStatus(); }, 5000);
 
