@@ -33,9 +33,9 @@ jobs:
       - name: Install docs dependencies
         run: pip install -r requirements-docs.txt
 
-      # ENABLE_PDF_EXPORT is intentionally unset here - the with-pdf plugin
-      # (see mkdocs.yml) no-ops without it, so this stays a fast HTML-only
-      # build. The combined PDF is only built in release.yml.
+      # Uses mkdocs.yml, which doesn't load the with-pdf plugin at all (see
+      # its own comment) - a fast HTML-only build. The combined PDF is only
+      # built in release.yml, against mkdocs-pdf.yml.
       - name: Build site
         run: mkdocs build --strict
 

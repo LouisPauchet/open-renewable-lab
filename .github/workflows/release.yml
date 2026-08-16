@@ -84,9 +84,7 @@ jobs:
         run: pip install -r requirements-docs.txt
 
       - name: Build documentation PDF
-        env:
-          ENABLE_PDF_EXPORT: "1"
-        run: mkdocs build --strict
+        run: mkdocs build --strict --config-file mkdocs-pdf.yml
 
       - uses: actions/upload-artifact@v4
         with:

@@ -1,0 +1,14 @@
+INHERIT: mkdocs.yml
+
+# Only used by release.yml's docs-pdf job (mkdocs build --strict
+# --config-file mkdocs-pdf.yml) - see mkdocs.yml's own comment on why the
+# with-pdf plugin doesn't live there. No enabled_if_env gating needed here:
+# this config's only purpose is producing the PDF, so the plugin should
+# always run when this file is used.
+plugins:
+  - search
+  - with-pdf:
+      author: The University Centre in Svalbard (UNIS)
+      cover_title: Open Renewable Lab
+      cover_subtitle: Firmware & Setup Documentation
+      output_path: pdf/open-renewable-lab-docs.pdf

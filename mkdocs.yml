@@ -51,11 +51,14 @@ markdown_extensions:
 
 plugins:
   - search
-  - with-pdf:
-      # Off by default (plain `mkdocs build` for the Pages deploy skips PDF
-      # rendering entirely); the release workflow sets ENABLE_PDF_EXPORT=1.
-      enabled_if_env: ENABLE_PDF_EXPORT
-      author: The University Centre in Svalbard (UNIS)
-      cover_title: Open Renewable Lab
-      cover_subtitle: Firmware & Setup Documentation
-      output_path: pdf/open-renewable-lab-docs.pdf
+
+# The combined-PDF export (mkdocs-with-pdf) lives in mkdocs-pdf.yml, not
+# here - deliberately not just gated by ENABLE_PDF_EXPORT/enabled_if_env
+# in this file, because that plugin always logs a WARNING-level "not
+# generating PDF" notice when its own enabled_if_env var isn't set, and
+# `mkdocs build --strict` (used by both the docs.yml Pages deploy and this
+# same command) treats any WARNING as fatal - the plugin being merely
+# a no-op isn't enough, it still breaks --strict. Splitting it into a
+# separate config that only release.yml uses (mkdocs build --strict
+# --config-file mkdocs-pdf.yml) means the plugin is never loaded at all
+# for the fast HTML-only Pages build, so it has nothing to warn about.
